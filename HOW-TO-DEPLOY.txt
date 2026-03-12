@@ -1,0 +1,32 @@
+HOW TO PUT THIS ON GITHUB
+=========================
+
+1. Go to github.com → sign in → click "New repository"
+   Name it: chores-family
+   Keep it Public
+   Click "Create repository"
+
+2. Download and install GitHub Desktop from:
+   https://desktop.github.com
+   (This is the easiest way — no terminal needed)
+
+3. Open GitHub Desktop → File → Add local repository
+   → Choose this folder (chores-supabase)
+   → Click "Publish repository"
+   → Select your "chores-family" repo → Publish
+
+4. Go back to Netlify → Continuous deployment → Link repository
+   → Choose GitHub → Select "chores-family"
+   → Build command:     npm run build
+   → Publish directory: dist
+   → Click Deploy!
+
+Netlify will automatically build and deploy the site.
+Every time you push a change to GitHub, the site updates itself.
+
+YOUR PINS:
+  אסף (Asaf) → 1234
+  אנה (Anna) → 5678
+
+To change a PIN: edit src/App.jsx, find the USERS array at the top,
+change the pin value, save, and push to GitHub again.
