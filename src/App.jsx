@@ -595,7 +595,7 @@ export default function App() {
         setBonus(data.bonus||{ido:0,yotam:0,itai:0});
         stateRef.current = data;
       }
-    );
+    });
     return stop;
   },[]);
 
