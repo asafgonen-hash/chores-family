@@ -1,16 +1,83 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { loadData, saveData, subscribeToRealtime } from "./supabase.js";
+import { loadData, saveData, subscribeToRealtime, uploadProofPhoto } from "./supabase.js";
 
-// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+// ─── EMAIL CONFIG ─────────────────────────────────────────────────────────────
+const EMAILJS_SERVICE_ID  = "PASTE_SERVICE_ID";
+const EMAILJS_TEMPLATE_ID = "PASTE_TEMPLATE_ID";
+const EMAILJS_PUBLIC_KEY  = "PASTE_PUBLIC_KEY";
+const ALERT_EMAILS        = ["PASTE_YOUR_EMAIL", "PASTE_ANNA_EMAIL"];
+
+async function sendEmail(subject, body) {
+  if (EMAILJS_SERVICE_ID === "PASTE_SERVICE_ID") return;
+  try {
+    await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE_ID, template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: { to_email: ALERT_EMAILS.join(","), subject, message: body },
+      }),
+    });
+  } catch(e) { console.warn("Email error:", e); }
+}
+
+// ─── BRUSHING WATCHDOG ────────────────────────────────────────────────────────
+const MORNING_GAP_HOURS = 15;
+const EVENING_GAP_HOURS = 10;
+function startBrushingWatchdog(getLog) {
+  const MORNING_ID = "brush-morning", EVENING_ID = "brush-evening";
+  const BRUSH_IDS = [MORNING_ID, EVENING_ID];
+  const KIDS = ["ido","yotam","itai"];
+  const KID_NAMES = { ido:"עידו", yotam:"יותם", itai:"איתי" };
+  const alerted = {};
+  const check = () => {
+    const now = Date.now(), log = getLog();
+    KIDS.forEach(uid => {
+      const lastEntry = [...log].filter(e=>e.userId===uid&&BRUSH_IDS.includes(e.choreId)).sort((a,b)=>b.ts-a.ts)[0];
+      let lastBrushTs, gapMs;
+      if (!lastEntry) {
+        const midnight = new Date(); midnight.setHours(0,0,0,0);
+        lastBrushTs = midnight.getTime(); gapMs = EVENING_GAP_HOURS * 3600000;
+      } else {
+        lastBrushTs = lastEntry.ts;
+        gapMs = lastEntry.choreId === MORNING_ID ? MORNING_GAP_HOURS*3600000 : EVENING_GAP_HOURS*3600000;
+      }
+      const alertKey = `${uid}-${lastBrushTs}`;
+      if (now >= lastBrushTs + gapMs && !alerted[alertKey]) {
+        alerted[alertKey] = true;
+        const h = Math.floor((now-lastBrushTs)/3600000);
+        sendEmail(`🦷 ${KID_NAMES[uid]} לא צחצח שיניים!`,
+          `${KID_NAMES[uid]} לא צחצח שיניים — לפני ${h} שעות.\nהיכנסו לאפליקציה לבדוק. 🪥`);
+      }
+    });
+  };
+  check();
+  return setInterval(check, 10 * 60 * 1000);
+}
+
+// ─── DESIGN SYSTEM ────────────────────────────────────────────────────────────
+const DS = {
+  bg: "#000000", surface: "#111111", surface2: "#1a1a1a",
+  border: "rgba(255,255,255,0.07)", text: "#ffffff",
+  muted: "#666666", dim: "#333333", accent: "#00D4AA",
+};
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const USERS = [
-  { id: "ido",   name: "עידו",  emoji: "🦁", color: "#FF6B6B", role: "kid" },
-  { id: "yotam", name: "יותם",  emoji: "🐊", color: "#4ECDC4", role: "kid" },
-  { id: "itai",  name: "איתי",  emoji: "🚀", color: "#FFE66D", role: "kid" },
-  { id: "asaf",  name: "אסף",   emoji: "👨‍💼", color: "#A78BFA", role: "parent", pin: "1234" },
-  { id: "anna",  name: "אנה",   emoji: "👩‍💼", color: "#F9A8D4", role: "parent", pin: "5678" },
+  { id:"ido",   name:"עידו",  color:"#FF453A", role:"kid"    },
+  { id:"yotam", name:"יותם",  color:"#30D158", role:"kid"    },
+  { id:"itai",  name:"איתי",  color:"#FFD60A", role:"kid"    },
+  { id:"asaf",  name:"אסף",   color:"#0A84FF", role:"parent", pin:"1234" },
+  { id:"anna",  name:"אנה",   color:"#FF375F", role:"parent", pin:"5678" },
 ];
 
 const CHORE_CATEGORIES = [
+  { id:"hygiene", icon:"🦷", title:"היגיינה", chores:[
+    {id:"brush-morning", name:"צחצוח שיניים בוקר", pts:4, requiresPhoto:true},
+    {id:"brush-evening", name:"צחצוח שיניים ערב",  pts:4, requiresPhoto:true},
+    {id:"shower-done",   name:"מקלחת",              pts:3},
+  ]},
   { id:"room",    icon:"🛏️", title:"סידור חדרים", chores:[
     {id:"make-bed",    name:"סידור מיטות",              pts:3},
     {id:"pillows",     name:"יישור שמיכות וכריות",       pts:2},
@@ -60,7 +127,7 @@ const CHORE_CATEGORIES = [
     {id:"toilet",      name:"ניקוי אסלה",                 pts:5},
     {id:"sink-bath",   name:"ניקוי כיור בחדר רחצה",       pts:4},
     {id:"mirror",      name:"ניקוי מראה בחדר רחצה",       pts:3},
-    {id:"shower",      name:"ניקוי מקלחת",               pts:6},
+    {id:"shower",      name:"ניקוי מקלחת",                pts:6},
     {id:"bathtub",     name:"ניקוי אמבטיה",               pts:6},
   ]},
   { id:"linens",  icon:"🛁", title:"החלפות", chores:[
@@ -82,14 +149,14 @@ const CHORE_CATEGORIES = [
     {id:"kit-closet",  name:"סידור ארונות מטבח",          pts:5},
   ]},
   { id:"deep",    icon:"🔧", title:"ניקוי מעמיק", chores:[
-    {id:"clean-oven",  name:"ניקוי תנור",                 pts:8},
-    {id:"clean-fridge-deep",name:"ניקוי מקרר מבפנים",    pts:7},
-    {id:"ac-filter",   name:"ניקוי פילטרים של מזגן",      pts:7},
+    {id:"clean-oven",        name:"ניקוי תנור",           pts:8},
+    {id:"clean-fridge-deep", name:"ניקוי מקרר מבפנים",   pts:7},
+    {id:"ac-filter",         name:"ניקוי פילטרים מזגן",  pts:7},
   ]},
   { id:"carpets", icon:"🛋️", title:"שטיחים ווילונות", chores:[
     {id:"wash-curtains",name:"כביסת וילונות",             pts:6},
-    {id:"vac-carpet",  name:"שאיבת שטיחים",              pts:5},
-    {id:"clean-carpet",name:"ניקוי שטיחים",              pts:6},
+    {id:"vac-carpet",   name:"שאיבת שטיחים",              pts:5},
+    {id:"clean-carpet", name:"ניקוי שטיחים",              pts:6},
   ]},
   { id:"grocery", icon:"🛒", title:"קניות", chores:[
     {id:"sort-grocery",name:"סידור קניות מהמכולת",        pts:4},
@@ -97,19 +164,19 @@ const CHORE_CATEGORIES = [
     {id:"pantry-items",name:"הכנסת מוצרים לארונות מטבח",  pts:3},
   ]},
   { id:"dog",     icon:"🐕", title:"הכלב", chores:[
-    {id:"dog-walk",    name:"לקחת את הכלב לסיבוב",        pts:6},
-    {id:"dog-food",    name:"להאכיל את הכלב",             pts:3},
-    {id:"dog-water",   name:"להחליף מים לכלב",            pts:2},
+    {id:"dog-walk",  name:"לקחת את הכלב לסיבוב",          pts:6},
+    {id:"dog-food",  name:"להאכיל את הכלב",               pts:3},
+    {id:"dog-water", name:"להחליף מים לכלב",              pts:2},
   ]},
 ];
 
 const CAREERS = [
-  { icon:"🧹", title:"עוזר ניקיון",    pts:0   },
-  { icon:"⭐", title:"כוכב עוזר",      pts:30  },
-  { icon:"🏆", title:"אלוף הבית",      pts:80  },
-  { icon:"🧑‍🍳", title:"שף ניקיון",     pts:150 },
-  { icon:"🦸", title:"גיבור הבית",     pts:250 },
-  { icon:"👑", title:"מלך/מלכת הבית", pts:400 },
+  { title:"עוזר ניקיון",    pts:0   },
+  { title:"כוכב עוזר",      pts:30  },
+  { title:"אלוף הבית",      pts:80  },
+  { title:"שף ניקיון",      pts:150 },
+  { title:"גיבור הבית",     pts:250 },
+  { title:"מלך/מלכת הבית", pts:400 },
 ];
 
 const BADGES = [
@@ -121,9 +188,9 @@ const BADGES = [
   { id:"star",   icon:"💫", title:"סופר-כוכב",   cond: s => s.score >= 100 },
 ];
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 const timeAgo = ts => {
-  const d = Date.now() - ts;
+  const d = Date.now()-ts;
   if (d < 60000) return "עכשיו";
   if (d < 3600000) return `לפני ${Math.floor(d/60000)} דקות`;
   if (d < 86400000) return `לפני ${Math.floor(d/3600000)} שעות`;
@@ -137,12 +204,97 @@ const countToday = (uid, choreId, log) => {
 };
 const getLastDaysLog = (log, days=7) => log.filter(e=>e.ts>=Date.now()-days*86400000);
 
-// ─── CONFETTI ────────────────────────────────────────────────────────────────
-function useConfetti() {
-  const canvasRef = useRef(null);
-  const particles = useRef([]);
-  const rafRef    = useRef(null);
+// ─── LOGO ─────────────────────────────────────────────────────────────────────
+function Logo({ size=32 }) {
+  const s = size;
+  return (
+    <svg width={s} height={s} viewBox="0 0 120 120" fill="none">
+      <defs>
+        <radialGradient id="logoBg" cx="40%" cy="35%" r="70%">
+          <stop offset="0%" stopColor="#0d1117"/><stop offset="100%" stopColor="#000"/>
+        </radialGradient>
+        <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stopColor="#00D4AA" stopOpacity="0.2"/><stop offset="100%" stopColor="#00D4AA" stopOpacity="0"/>
+        </radialGradient>
+        <linearGradient id="logoRingA" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#00D4AA"/><stop offset="50%" stopColor="#0A84FF"/><stop offset="100%" stopColor="#BF5AF2"/>
+        </linearGradient>
+        <linearGradient id="logoRingB" x1="100%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#FF453A"/><stop offset="100%" stopColor="#FF9F0A"/>
+        </linearGradient>
+        <filter id="logoGlowF"><feGaussianBlur stdDeviation="2.5" result="b"/><feComposite in="SourceGraphic" in2="b" operator="over"/></filter>
+      </defs>
+      <rect width="120" height="120" rx="26" fill="url(#logoBg)"/>
+      <circle cx="60" cy="58" r="38" fill="url(#logoGlow)"/>
+      <circle cx="60" cy="60" r="42" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5"/>
+      <circle cx="60" cy="60" r="42" fill="none" stroke="url(#logoRingA)" strokeWidth="5" strokeLinecap="round"
+        strokeDasharray="195 264" strokeDashoffset="-20" transform="rotate(-90 60 60)" filter="url(#logoGlowF)"/>
+      <circle cx="60" cy="60" r="33" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="4"/>
+      <circle cx="60" cy="60" r="33" fill="none" stroke="url(#logoRingB)" strokeWidth="4" strokeLinecap="round"
+        strokeDasharray="145 207" strokeDashoffset="-40" transform="rotate(-90 60 60)" filter="url(#logoGlowF)"/>
+      <path d="M60 28 L78 46 L42 46 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeLinejoin="round"/>
+      <rect x="44" y="46" width="32" height="26" rx="2" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+      <rect x="54" y="58" width="12" height="14" rx="3" fill="url(#logoRingA)" opacity="0.7"/>
+      <rect x="47" y="50" width="8" height="7" rx="1.5" fill="rgba(0,212,170,0.25)" stroke="rgba(0,212,170,0.4)" strokeWidth="0.8"/>
+      <rect x="65" y="50" width="8" height="7" rx="1.5" fill="rgba(10,132,255,0.25)" stroke="rgba(10,132,255,0.4)" strokeWidth="0.8"/>
+      <circle cx="24" cy="28" r="1.2" fill="#00D4AA" opacity="0.6"/>
+      <circle cx="96" cy="32" r="0.9" fill="#0A84FF" opacity="0.5"/>
+      <circle cx="18" cy="72" r="0.8" fill="#BF5AF2" opacity="0.4"/>
+      <circle cx="102" cy="78" r="1.1" fill="#FF453A" opacity="0.5"/>
+      <circle cx="89" cy="94" r="0.9" fill="#30D158" opacity="0.4"/>
+    </svg>
+  );
+}
 
+// ─── AVATAR ───────────────────────────────────────────────────────────────────
+function Avatar({ user, photo, size=48, onClick, editable=false }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div style={{position:"relative",width:size,height:size,flexShrink:0,cursor:onClick?"pointer":"default"}}
+      onClick={onClick} onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}>
+      <div style={{width:size,height:size,borderRadius:"50%",overflow:"hidden",
+        border:`2px solid ${hover&&editable?user.color:user.color+"44"}`,
+        background:`${user.color}12`,
+        display:"flex",alignItems:"center",justifyContent:"center",
+        transition:"border-color .2s, box-shadow .2s",
+        boxShadow:hover&&editable?`0 0 14px ${user.color}44`:"none"}}>
+        {photo
+          ? <img src={photo} alt={user.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          : <span style={{fontFamily:"-apple-system,sans-serif",fontSize:size*0.38,fontWeight:800,color:user.color,userSelect:"none"}}>{user.name[0]}</span>
+        }
+      </div>
+      {editable && (
+        <div style={{position:"absolute",bottom:-1,left:-1,width:size*0.36,height:size*0.36,borderRadius:"50%",
+          background:hover?user.color:"#1a1a1a",border:`1.5px solid #000`,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:size*0.16,transition:"background .2s"}}>
+          {hover?"✓":"📷"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── RING ─────────────────────────────────────────────────────────────────────
+function Ring({ value, max, color, size=64, sw=6 }) {
+  const r = (size-sw*2)/2, circ = 2*Math.PI*r, dash = Math.min(value/max,1)*circ;
+  return (
+    <div style={{position:"relative",width:size,height:size}}>
+      <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,.06)" strokeWidth={sw}/>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color}
+          strokeWidth={sw} strokeLinecap="round" strokeDasharray={`${dash} ${circ}`}/>
+      </svg>
+      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+        <span style={{fontSize:size*0.22,fontWeight:700,color:DS.text,lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{value}</span>
+        <span style={{fontSize:size*0.13,color:DS.muted}}>נק'</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFETTI ─────────────────────────────────────────────────────────────────
+function useConfetti() {
+  const canvasRef = useRef(null), particles = useRef([]), rafRef = useRef(null);
   const animate = useCallback(() => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -152,233 +304,268 @@ function useConfetti() {
       if(p.life<=0) return;
       ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
       ctx.translate(p.x,p.y); ctx.rotate(p.rot*Math.PI/180);
-      ctx.fillRect(-p.size/2,-p.size/4,p.size,p.size/2);
-      ctx.restore();
+      ctx.fillRect(-p.size/2,-p.size/4,p.size,p.size/2); ctx.restore();
     });
     particles.current = particles.current.filter(p=>p.life>0);
     if (particles.current.length>0) rafRef.current = requestAnimationFrame(animate);
     else rafRef.current = null;
   }, []);
-
   const pop = useCallback(() => {
-    const colors = ["#FF6B6B","#4ECDC4","#FFE66D","#A78BFA","#F9A8D4","#fff"];
+    const colors = ["#FF453A","#30D158","#FFD60A","#0A84FF","#00D4AA","#fff"];
     for(let i=0;i<45;i++) particles.current.push({
-      x:Math.random()*window.innerWidth, y:window.innerHeight*0.3+Math.random()*window.innerHeight*0.4,
-      vx:(Math.random()-.5)*8, vy:(Math.random()-2)*6,
-      size:4+Math.random()*7, color:colors[Math.floor(Math.random()*colors.length)],
+      x:Math.random()*window.innerWidth, y:window.innerHeight*0.4+Math.random()*window.innerHeight*0.3,
+      vx:(Math.random()-.5)*8, vy:(Math.random()-2)*6, size:4+Math.random()*7,
+      color:colors[Math.floor(Math.random()*colors.length)],
       life:1, decay:0.016+Math.random()*0.014, rot:Math.random()*360, rotV:(Math.random()-.5)*8,
     });
     if (!rafRef.current) rafRef.current = requestAnimationFrame(animate);
   }, [animate]);
-
   useEffect(() => {
-    const resize = () => {
-      if(canvasRef.current){canvasRef.current.width=window.innerWidth;canvasRef.current.height=window.innerHeight;}
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
+    const resize = () => { if(canvasRef.current){canvasRef.current.width=window.innerWidth;canvasRef.current.height=window.innerHeight;} };
+    resize(); window.addEventListener("resize",resize);
+    return () => window.removeEventListener("resize",resize);
   }, []);
-
   return { canvasRef, pop };
 }
 
 // ─── PIN MODAL ────────────────────────────────────────────────────────────────
 function PinModal({ user, onSuccess, onCancel }) {
-  const [pin, setPin]     = useState("");
-  const [error, setError] = useState(false);
-
+  const [pin, setPin] = useState(""), [error, setError] = useState(false);
   const tryPin = p => {
-    if (p === user.pin) { onSuccess(); }
-    else { setError(true); setPin(""); setTimeout(()=>setError(false), 1200); }
+    if (p===user.pin) { onSuccess(); }
+    else { setError(true); setPin(""); setTimeout(()=>setError(false),1200); }
   };
   const press = k => {
     if (k==="⌫") { setPin(p=>p.slice(0,-1)); return; }
-    if (k==="" || pin.length>=4) return;
-    const np = pin+k;
-    setPin(np);
-    if (np.length===4) setTimeout(()=>tryPin(np), 120);
+    if (k===""||pin.length>=4) return;
+    const np=pin+k; setPin(np);
+    if(np.length===4) setTimeout(()=>tryPin(np),120);
   };
-
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}}>
-      <div style={{background:"#1a1a2e",borderRadius:24,padding:"32px 28px",maxWidth:320,width:"100%",border:`2px solid ${user.color}`,textAlign:"center"}}>
-        <div style={{fontSize:"3rem",marginBottom:12}}>{user.emoji}</div>
-        <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.4rem",color:user.color,marginBottom:6}}>{user.name}</div>
-        <div style={{color:"#7a7a99",fontSize:"0.85rem",marginBottom:20}}>הכנס קוד PIN להורה</div>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.9)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}}>
+      <div style={{background:DS.surface,borderRadius:24,padding:"32px 28px",maxWidth:320,width:"100%",border:`1px solid ${user.color}44`,textAlign:"center"}}>
+        <div style={{width:56,height:56,borderRadius:"50%",background:`${user.color}18`,border:`2px solid ${user.color}44`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px",fontFamily:"-apple-system,sans-serif",fontSize:"1.5rem",fontWeight:800,color:user.color}}>{user.name[0]}</div>
+        <div style={{fontSize:"1.1rem",fontWeight:700,color:user.color,marginBottom:4}}>{user.name}</div>
+        <div style={{color:DS.muted,fontSize:"0.82rem",marginBottom:20}}>הכנס קוד PIN</div>
         <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:16}}>
           {[0,1,2,3].map(i=>(
-            <div key={i} style={{width:44,height:54,borderRadius:12,background:"#0f0f1a",border:`2px solid ${error?"#FF6B6B":pin.length>i?user.color:"rgba(255,255,255,.1)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.4rem",color:user.color,transition:"border-color .2s"}}>
+            <div key={i} style={{width:42,height:52,borderRadius:10,background:"#000",border:`2px solid ${error?"#FF453A":pin.length>i?user.color:"rgba(255,255,255,.08)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.3rem",color:user.color,transition:"border-color .2s"}}>
               {pin.length>i?"●":""}
             </div>
           ))}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:14}}>
           {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=>(
-            <button key={i} onClick={()=>press(String(k))} disabled={k===""} style={{padding:"14px 0",borderRadius:12,border:"1px solid rgba(255,255,255,.1)",background:k===""?"transparent":"rgba(255,255,255,.05)",color:"#f0f0ff",fontSize:"1.2rem",fontFamily:"'Heebo',sans-serif",cursor:k===""?"default":"pointer",fontWeight:700}}>
-              {k}
-            </button>
+            <button key={i} onClick={()=>press(String(k))} disabled={k===""} style={{padding:"13px 0",borderRadius:10,border:"1px solid rgba(255,255,255,.07)",background:k===""?"transparent":"rgba(255,255,255,.04)",color:DS.text,fontSize:"1.1rem",fontFamily:"-apple-system,sans-serif",cursor:k===""?"default":"pointer",fontWeight:600}}>{k}</button>
           ))}
         </div>
-        {error && <div style={{color:"#FF6B6B",fontSize:"0.85rem",marginBottom:10}}>קוד שגוי, נסה שוב</div>}
-        <button onClick={onCancel} style={{background:"none",border:"none",color:"#7a7a99",cursor:"pointer",fontSize:"0.85rem",fontFamily:"'Heebo',sans-serif"}}>ביטול</button>
+        {error && <div style={{color:"#FF453A",fontSize:"0.82rem",marginBottom:10}}>קוד שגוי</div>}
+        <button onClick={onCancel} style={{background:"none",border:"none",color:DS.muted,cursor:"pointer",fontSize:"0.82rem",fontFamily:"-apple-system,sans-serif"}}>ביטול</button>
       </div>
     </div>
   );
 }
 
-// ─── TOAST ────────────────────────────────────────────────────────────────────
+// ─── TOAST & SYNC ─────────────────────────────────────────────────────────────
 function Toast({ msg }) {
   return (
-    <div style={{position:"fixed",bottom:30,left:"50%",transform:`translateX(-50%) translateY(${msg?"0":"100px"})`,background:"#1e293b",color:"#fff",padding:"12px 24px",borderRadius:30,fontWeight:600,fontSize:"0.9rem",transition:"transform .35s cubic-bezier(.4,2,.6,1)",zIndex:999,whiteSpace:"nowrap",boxShadow:"0 8px 30px rgba(0,0,0,.4)",fontFamily:"'Heebo',sans-serif"}}>
+    <div style={{position:"fixed",bottom:30,left:"50%",transform:`translateX(-50%) translateY(${msg?"0":"100px"})`,background:"#1c1c1e",color:DS.text,padding:"11px 22px",borderRadius:24,fontWeight:600,fontSize:"0.85rem",transition:"transform .35s cubic-bezier(.4,2,.6,1)",zIndex:999,whiteSpace:"nowrap",boxShadow:"0 8px 30px rgba(0,0,0,.5)",fontFamily:"-apple-system,sans-serif"}}>
       {msg||"‎"}
     </div>
   );
 }
-
-// ─── SYNC INDICATOR ──────────────────────────────────────────────────────────
 function SyncDot({ saving }) {
   return (
-    <div style={{position:"fixed",top:14,left:16,zIndex:200,display:"flex",alignItems:"center",gap:6,fontSize:"0.72rem",color:"#7a7a99",fontFamily:"'Heebo',sans-serif"}}>
-      <div style={{width:8,height:8,borderRadius:"50%",background:saving?"#FFE66D":"#4ECDC4",boxShadow:saving?"0 0 6px #FFE66D":"0 0 6px #4ECDC4",transition:"background .3s"}}/>
-      {saving ? "שומר..." : "מסונכרן"}
+    <div style={{position:"fixed",top:12,left:14,zIndex:200,display:"flex",alignItems:"center",gap:5,fontSize:"0.68rem",color:DS.muted,fontFamily:"-apple-system,sans-serif"}}>
+      <div style={{width:7,height:7,borderRadius:"50%",background:saving?"#FFD60A":DS.accent,boxShadow:saving?`0 0 5px #FFD60A`:`0 0 5px ${DS.accent}`,transition:"background .3s"}}/>
+      {saving?"שומר...":"מסונכרן"}
+    </div>
+  );
+}
+
+// ─── PHOTO UPLOAD ─────────────────────────────────────────────────────────────
+function PhotoUpload({ user, chore, onDone, onSkip }) {
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+  const handleFile = file => { if(!file) return; setPreview(URL.createObjectURL(file)); setError(""); };
+  const handleUpload = async () => {
+    const file = inputRef.current?.files?.[0];
+    if(!file){ setError("אנא בחר תמונה"); return; }
+    setUploading(true);
+    try { const url = await uploadProofPhoto(file,user.id,chore.id); onDone(url); }
+    catch(e){ setError("שגיאה בהעלאה"); console.error(e); }
+    finally { setUploading(false); }
+  };
+  return (
+    <div style={{background:DS.surface2,borderRadius:12,padding:"14px",marginTop:4,border:`1px solid ${user.color}44`}}>
+      <div style={{fontSize:"0.82rem",fontWeight:700,marginBottom:10,color:user.color}}>📷 הוכחה — {chore.name}</div>
+      <input ref={inputRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>handleFile(e.target.files?.[0])}/>
+      {!preview ? (
+        <div onClick={()=>inputRef.current?.click()} style={{width:"100%",height:120,background:"rgba(255,255,255,.03)",border:`2px dashed ${user.color}66`,borderRadius:10,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer"}}>
+          <span style={{fontSize:"2rem"}}>📸</span>
+          <span style={{fontSize:"0.82rem",fontWeight:700,color:user.color}}>צלם / בחר תמונה</span>
+        </div>
+      ) : (
+        <div style={{position:"relative",marginBottom:10}}>
+          <img src={preview} alt="preview" style={{width:"100%",borderRadius:10,maxHeight:160,objectFit:"cover"}}/>
+          <button onClick={()=>{setPreview(null);if(inputRef.current)inputRef.current.value="";}} style={{position:"absolute",top:6,left:6,background:"rgba(0,0,0,.7)",border:"none",borderRadius:"50%",color:"#fff",width:26,height:26,cursor:"pointer",fontSize:"0.8rem"}}>✕</button>
+        </div>
+      )}
+      {error && <div style={{color:"#FF453A",fontSize:"0.78rem",marginTop:6}}>{error}</div>}
+      <div style={{display:"flex",gap:7,marginTop:10}}>
+        <button onClick={handleUpload} disabled={!preview||uploading} style={{flex:1,background:preview&&!uploading?user.color:"rgba(255,255,255,.08)",border:"none",borderRadius:10,color:preview&&!uploading?"#000":DS.muted,fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.85rem",padding:"10px",cursor:preview&&!uploading?"pointer":"default"}}>
+          {uploading?"מעלה...":"✓ שלח הוכחה"}
+        </button>
+        <button onClick={onSkip} style={{background:"none",border:"1px solid rgba(255,255,255,.08)",borderRadius:10,color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.8rem",padding:"10px 14px",cursor:"pointer"}}>דלג</button>
+      </div>
     </div>
   );
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ log, bonus, onSwitchUser }) {
-  const kids     = USERS.filter(u=>u.role==="kid");
-  const sorted   = [...kids].sort((a,b)=>getUserScore(b.id,log,bonus)-getUserScore(a.id,log,bonus));
-  const weekLog  = getLastDaysLog(log,7);
+function Dashboard({ log, bonus, avatars, onSwitchUser }) {
+  const kids = USERS.filter(u=>u.role==="kid");
+  const sorted = [...kids].sort((a,b)=>getUserScore(b.id,log,bonus)-getUserScore(a.id,log,bonus));
+  const weekLog = getLastDaysLog(log,7);
   const weekCounts = Object.fromEntries(kids.map(k=>[k.id,weekLog.filter(e=>e.userId===k.id).length]));
-  const lastEntry  = log[log.length-1];
-  const lastUser   = lastEntry?USERS.find(u=>u.id===lastEntry.userId):null;
-  const maxWeek    = Math.max(...Object.values(weekCounts),1);
-  const medals     = ["🥇","🥈","🥉"];
+  const lastEntry = log[log.length-1];
+  const lastUser = lastEntry?USERS.find(u=>u.id===lastEntry.userId):null;
+  const maxWeek = Math.max(...Object.values(weekCounts),1);
 
   return (
-    <div style={{padding:"24px 20px 80px",maxWidth:900,margin:"0 auto"}}>
-      <div style={{textAlign:"center",padding:"32px 0 24px"}}>
-        <h1 style={{fontFamily:"'Fredoka One',cursive",fontSize:"clamp(2rem,6vw,3rem)",background:"linear-gradient(135deg,#FF6B6B,#FFE66D,#4ECDC4)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>🏠 משימות הבית</h1>
-        <p style={{color:"#7a7a99",marginTop:6}}>מי המנצח השבוע?</p>
+    <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+        <div>
+          <div style={{fontSize:"1.4rem",fontWeight:700,letterSpacing:-0.5}}>משימות הבית</div>
+          <div style={{fontSize:"0.72rem",color:DS.muted,marginTop:2}}>
+            {new Date().toLocaleDateString("he-IL",{weekday:"long",day:"numeric",month:"long"})}
+          </div>
+        </div>
+        <Logo size={40}/>
       </div>
 
+      {/* Last chore */}
       {lastUser && (
-        <div style={{background:"#1a1a2e",borderRadius:16,padding:"14px 18px",border:"1px solid rgba(255,255,255,.08)",marginBottom:20,display:"flex",alignItems:"center",gap:12}}>
-          <span style={{fontSize:"1.6rem"}}>{lastUser.emoji}</span>
+        <div style={{background:DS.surface,borderRadius:14,padding:"12px 14px",border:`1px solid ${DS.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+          <Avatar user={lastUser} photo={avatars?.[lastUser.id]} size={36}/>
           <div>
-            <div style={{fontSize:"0.75rem",color:"#7a7a99"}}>המשימה האחרונה</div>
-            <div style={{fontWeight:700,color:lastUser.color}}>{lastUser.name}</div>
-            <div style={{fontSize:"0.75rem",color:"#7a7a99"}}>{lastEntry.choreTitle} · {timeAgo(lastEntry.ts)}</div>
+            <div style={{fontSize:"0.68rem",color:DS.muted}}>המשימה האחרונה</div>
+            <div style={{fontSize:"0.85rem",fontWeight:700,color:lastUser.color}}>{lastUser.name} · {lastEntry.choreTitle}</div>
+            <div style={{fontSize:"0.68rem",color:DS.dim}}>{timeAgo(lastEntry.ts)}</div>
           </div>
-          <div style={{marginRight:"auto",fontFamily:"'Fredoka One',cursive",fontSize:"1.4rem",color:lastUser.color}}>+{lastEntry.pts}</div>
+          <div style={{marginRight:"auto",fontSize:"1.1rem",fontWeight:800,color:lastUser.color,fontVariantNumeric:"tabular-nums"}}>+{lastEntry.pts}</div>
         </div>
       )}
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14,marginTop:28}}>🏆 טבלת מובילים</div>
-      <div style={{display:"grid",gap:12,marginBottom:28}}>
-        {sorted.map((u,i)=>{
-          const sc=getUserScore(u.id,log,bonus); const wk=weekCounts[u.id];
-          return (
-            <div key={u.id} onClick={()=>onSwitchUser(u.id)} style={{background:"#1a1a2e",borderRadius:18,padding:"16px 20px",display:"flex",alignItems:"center",gap:16,border:`1px solid ${i===0?u.color+"55":"rgba(255,255,255,.08)"}`,cursor:"pointer",transition:"transform .15s"}}
-              onMouseEnter={e=>e.currentTarget.style.transform="translateX(-4px)"}
-              onMouseLeave={e=>e.currentTarget.style.transform=""}>
-              <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.8rem",width:40,textAlign:"center",color:["#FFD700","#C0C0C0","#CD7F32"][i]||"#7a7a99"}}>{medals[i]||i+1}</div>
-              <div style={{width:52,height:52,borderRadius:"50%",background:`${u.color}22`,border:`2px solid ${u.color}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.8rem",flexShrink:0}}>{u.emoji}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,color:u.color}}>{u.name}</div>
-                <div style={{fontSize:"0.8rem",color:"#7a7a99"}}>{wk} משימות השבוע · {log.filter(e=>e.userId===u.id).length} סה"כ</div>
-              </div>
-              <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.6rem",color:u.color,textAlign:"left"}}>{sc}<br/><span style={{fontSize:"0.7rem",fontFamily:"'Heebo',sans-serif",color:"#7a7a99"}}>נקודות</span></div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>📊 פעילות השבוע</div>
-      <div style={{background:"#1a1a2e",borderRadius:18,padding:20,border:"1px solid rgba(255,255,255,.08)",marginBottom:28}}>
-        <div style={{fontSize:"0.85rem",color:"#7a7a99"}}>משימות לפי ילד</div>
-        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:100,marginTop:12}}>
-          {kids.map(k=>{const cnt=weekCounts[k.id];const h=Math.round((cnt/maxWeek)*90);return(
-            <div key={k.id} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-              <div style={{fontSize:"0.72rem",fontWeight:700,color:k.color}}>{cnt}</div>
-              <div style={{width:"100%",height:h||4,borderRadius:"6px 6px 0 0",background:k.color,transition:"height .5s"}}/>
-              <div style={{fontSize:"0.7rem",color:"#7a7a99"}}>{k.name}</div>
-            </div>
-          );})}
+      {/* At a Glance */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>AT A GLANCE</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+        <div style={{background:DS.surface,borderRadius:14,padding:"14px 12px",border:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+          <div style={{fontSize:"0.65rem",color:DS.muted,fontWeight:600,alignSelf:"flex-start"}}>משימות השבוע</div>
+          <Ring value={weekLog.length} max={Math.max(weekLog.length+10,30)} color={DS.accent} size={70} sw={7}/>
+        </div>
+        <div style={{background:DS.surface,borderRadius:14,padding:"14px 12px",border:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+          <div style={{fontSize:"0.65rem",color:DS.muted,fontWeight:600,alignSelf:"flex-start"}}>מוביל השבוע</div>
+          <Ring value={getUserScore(sorted[0]?.id,log,bonus)} max={Math.max(getUserScore(sorted[0]?.id,log,bonus)+20,150)} color={sorted[0]?.color} size={70} sw={7}/>
+          <Avatar user={sorted[0]} photo={avatars?.[sorted[0]?.id]} size={26}/>
         </div>
       </div>
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>⚡ פעילות אחרונה</div>
-      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:28}}>
-        {[...log].reverse().slice(0,8).map((e,i)=>{
-          const u=USERS.find(u=>u.id===e.userId);
-          return(
-            <div key={i} style={{background:"#1a1a2e",borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:12,border:"1px solid rgba(255,255,255,.08)",fontSize:"0.9rem"}}>
-              <div style={{width:10,height:10,borderRadius:"50%",background:u?.color,flexShrink:0}}/>
-              <span style={{fontSize:"1.1rem"}}>{u?.emoji}</span>
-              <div><span style={{fontWeight:600,color:u?.color}}>{u?.name}</span><span style={{color:"#7a7a99"}}> · </span>{e.choreTitle}{e.duration&&<span style={{fontSize:"0.75rem",color:"#7a7a99"}}> ⏱ {e.duration} דק'</span>}</div>
-              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,marginRight:"auto"}}>
-                <span style={{fontWeight:700,color:u?.color,fontSize:"0.85rem"}}>+{e.pts}</span>
-                <span style={{color:"#7a7a99",fontSize:"0.78rem",whiteSpace:"nowrap"}}>{timeAgo(e.ts)}</span>
+      {/* Leaderboard */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>LEADERBOARD</div>
+      <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,overflow:"hidden",marginBottom:20}}>
+        {sorted.map((u,i)=>{
+          const sc=getUserScore(u.id,log,bonus);
+          return (
+            <div key={u.id} onClick={()=>onSwitchUser(u.id)} style={{padding:"12px 14px",borderBottom:i<sorted.length-1?`1px solid ${DS.border}`:"none",cursor:"pointer"}}
+              onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.03)"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
+                <span style={{fontSize:"0.68rem",color:DS.dim,width:12,fontVariantNumeric:"tabular-nums"}}>{i+1}</span>
+                <Avatar user={u} photo={avatars?.[u.id]} size={32}/>
+                <span style={{flex:1,fontSize:"0.88rem",fontWeight:600}}>{u.name}</span>
+                <span style={{fontSize:"0.92rem",fontWeight:800,color:u.color,fontVariantNumeric:"tabular-nums"}}>{sc}</span>
+                <span style={{fontSize:"0.65rem",color:DS.muted}}>נק'</span>
+              </div>
+              <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginRight:22}}>
+                <div style={{height:"100%",width:`${Math.min((sc/Math.max(...sorted.map(u=>getUserScore(u.id,log,bonus)),1))*100,100)}%`,background:u.color,borderRadius:2,transition:"width .6s"}}/>
               </div>
             </div>
           );
         })}
-        {log.length===0&&<div style={{textAlign:"center",color:"#7a7a99",padding:"40px 20px"}}><div style={{fontSize:"3rem",marginBottom:12}}>😴</div>עדיין אין משימות. בואו נתחיל!</div>}
       </div>
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>📈 סטטיסטיקות</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
-        {[
-          {emoji:"✅",val:log.length,lbl:'משימות שבוצעו'},
-          {emoji:"⭐",val:kids.reduce((s,k)=>s+getUserScore(k.id,log,bonus),0),lbl:'נקודות סה"כ'},
-          {emoji:"🔥",val:weekLog.length,lbl:"השבוע"},
-          {emoji:"⏱",val:log.filter(e=>e.duration).reduce((s,e)=>s+e.duration,0),lbl:"דקות עבודה"},
-        ].map((s,i)=>(
-          <div key={i} style={{background:"#1a1a2e",borderRadius:16,padding:"18px 16px",border:"1px solid rgba(255,255,255,.08)",textAlign:"center"}}>
-            <div style={{fontSize:"2rem"}}>{s.emoji}</div>
-            <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.8rem",margin:"6px 0 2px"}}>{s.val}</div>
-            <div style={{fontSize:"0.78rem",color:"#7a7a99"}}>{s.lbl}</div>
-          </div>
-        ))}
+      {/* Weekly bars */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>LAST 7 DAYS</div>
+      <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"14px",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:72,marginBottom:8}}>
+          {kids.map(k=>{const cnt=weekCounts[k.id];const h=Math.round((cnt/maxWeek)*64);return(
+            <div key={k.id} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+              <div style={{fontSize:"0.65rem",fontWeight:700,color:k.color,fontVariantNumeric:"tabular-nums"}}>{cnt}</div>
+              <div style={{width:"100%",height:h||3,borderRadius:"4px 4px 0 0",background:k.color,transition:"height .5s"}}/>
+            </div>
+          );})}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {kids.map(k=>(
+            <div key={k.id} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+              <Avatar user={k} photo={avatars?.[k.id]} size={18}/>
+              <span style={{fontSize:"0.65rem",color:DS.muted}}>{k.name}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent activity */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>RECENT ACTIVITY</div>
+      <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"0 14px"}}>
+        {[...log].reverse().slice(0,8).map((e,i,arr)=>{
+          const u=USERS.find(u=>u.id===e.userId);
+          return (
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${DS.border}`:"none",fontSize:"0.82rem"}}>
+              <Avatar user={u} photo={avatars?.[u?.id]} size={28}/>
+              <div style={{flex:1}}>
+                <span style={{fontWeight:700,color:u?.color}}>{u?.name}</span>
+                <span style={{color:DS.muted}}> · </span>
+                <span>{e.choreTitle}</span>
+                {e.photoUrl&&<span style={{color:DS.dim}}> 📷</span>}
+                {e.duration&&<span style={{fontSize:"0.7rem",color:DS.dim}}> ⏱{e.duration}ד'</span>}
+              </div>
+              <span style={{fontSize:"0.7rem",fontWeight:700,color:u?.color,fontVariantNumeric:"tabular-nums"}}>+{e.pts}</span>
+              <span style={{fontSize:"0.65rem",color:DS.dim,minWidth:36,textAlign:"left"}}>{timeAgo(e.ts)}</span>
+            </div>
+          );
+        })}
+        {log.length===0&&<div style={{textAlign:"center",color:DS.muted,padding:"32px 20px",fontSize:"0.85rem"}}>עדיין אין משימות 😴</div>}
       </div>
     </div>
   );
 }
 
-
-// ─── REWARDS DISPLAY (KID) ────────────────────────────────────────────────────
+// ─── KID REWARDS ──────────────────────────────────────────────────────────────
 function KidRewards({ user, rewards, log, bonus, onRedeemReward }) {
   const score = getUserScore(user.id, log, bonus);
-  if (!rewards || rewards.length === 0) return null;
-
+  if (!rewards||rewards.length===0) return null;
   return (
-    <div style={{marginBottom:28}}>
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>🎁 פרסים</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12}}>
+    <div style={{marginBottom:20}}>
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>REWARDS</div>
+      <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4,scrollbarWidth:"none"}}>
         {rewards.map(r=>{
-          const redeemed = (r.redeemedBy||[]).filter(x=>x.uid===user.id).length;
-          const canRedeem = score >= r.pts;
-          const pct = Math.min(100, Math.round((score/r.pts)*100));
+          const redeemed=(r.redeemedBy||[]).filter(x=>x.uid===user.id).length;
+          const canRedeem=score>=r.pts;
+          const pct=Math.min(100,Math.round((score/r.pts)*100));
           return (
-            <div key={r.id} style={{background:"#1a1a2e",borderRadius:18,padding:16,border:`2px solid ${canRedeem?user.color:"rgba(255,255,255,.08)"}`,display:"flex",flexDirection:"column",gap:8,transition:"all .2s",opacity:canRedeem?1:0.7}}>
-              <div style={{fontSize:"2.2rem",textAlign:"center"}}>{r.emoji||"🎁"}</div>
-              <div style={{fontWeight:700,fontSize:"0.9rem",textAlign:"center"}}>{r.title}</div>
-              <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.1rem",textAlign:"center",color:canRedeem?user.color:"#7a7a99"}}>{r.pts} נק'</div>
-              {!canRedeem && (
-                <div style={{background:"rgba(255,255,255,.05)",borderRadius:8,height:6,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:8,transition:"width .5s"}}/>
-                </div>
-              )}
-              {!canRedeem && <div style={{fontSize:"0.7rem",color:"#555",textAlign:"center"}}>עוד {r.pts-score} נק'</div>}
-              {canRedeem && (
-                <button onClick={()=>onRedeemReward(r.id,user.id)} style={{background:user.color,border:"none",borderRadius:10,color:"#000",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:"0.85rem",padding:"8px",cursor:"pointer"}}>
-                  🎉 מימוש!
-                </button>
-              )}
-              {redeemed>0 && <div style={{fontSize:"0.7rem",color:"#4ECDC4",textAlign:"center"}}>מומש {redeemed} פעמים ✓</div>}
+            <div key={r.id} style={{flexShrink:0,width:130,background:DS.surface,borderRadius:14,padding:12,border:`1px solid ${canRedeem?user.color:DS.border}`,display:"flex",flexDirection:"column",gap:6,opacity:canRedeem?1:0.7}}>
+              <div style={{fontSize:"1.8rem",textAlign:"center"}}>{r.emoji||"🎁"}</div>
+              <div style={{fontSize:"0.78rem",fontWeight:700,textAlign:"center"}}>{r.title}</div>
+              <div style={{fontSize:"0.82rem",fontWeight:800,textAlign:"center",color:canRedeem?user.color:DS.muted,fontVariantNumeric:"tabular-nums"}}>{r.pts} נק'</div>
+              {!canRedeem&&<div style={{height:3,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:2}}/></div>}
+              {!canRedeem&&<div style={{fontSize:"0.65rem",color:DS.dim,textAlign:"center"}}>עוד {r.pts-score}</div>}
+              {canRedeem&&<button onClick={()=>onRedeemReward(r.id,user.id)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.8rem",padding:"6px",cursor:"pointer"}}>מימוש!</button>}
+              {redeemed>0&&<div style={{fontSize:"0.65rem",color:DS.accent,textAlign:"center"}}>✓ {redeemed}×</div>}
             </div>
           );
         })}
@@ -388,97 +575,146 @@ function KidRewards({ user, rewards, log, bonus, onRedeemReward }) {
 }
 
 // ─── KID PAGE ─────────────────────────────────────────────────────────────────
-function KidPage({ user, log, onLogChore, rewards, onRedeemReward }) {
-  const [openCats,    setOpenCats]    = useState({});
+function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo, onPhotoChange }) {
+  const [openCats, setOpenCats] = useState({hygiene:true});
   const [activeChore, setActiveChore] = useState(null);
-  const [selectedTime,setSelectedTime]= useState(null);
-  const [customTime,  setCustomTime]  = useState("");
+  const [selectedTime, setSelectedTime] = useState(null);
+  const [customTime, setCustomTime] = useState("");
+  const inputRef = useRef(null);
 
-  const score    = getUserScore(user.id, log, {});
-  const ulog     = log.filter(e=>e.userId===user.id);
-  const career   = [...CAREERS].reverse().find(c=>score>=c.pts)||CAREERS[0];
-  const catCounts= {};
+  const score = getUserScore(user.id,log,bonus);
+  const ulog = log.filter(e=>e.userId===user.id);
+  const career = [...CAREERS].reverse().find(c=>score>=c.pts)||CAREERS[0];
+  const catCounts={};
   ulog.forEach(e=>{catCounts[e.catId]=(catCounts[e.catId]||0)+1;});
-  const fastCount  = ulog.filter(e=>e.duration&&e.duration<=5).length;
-  const userStats  = {totalDone:ulog.length,score,fastCount,catCounts};
+  const fastCount=ulog.filter(e=>e.duration&&e.duration<=5).length;
+  const userStats={totalDone:ulog.length,score,fastCount,catCounts};
+  const nextReward=[...(rewards||[])].sort((a,b)=>a.pts-b.pts).find(r=>r.pts>score);
 
   const toggleCat = id => setOpenCats(p=>({...p,[id]:!p[id]}));
-  const openTimeLog = (chore, catId) => {
-    if (activeChore?.choreId===chore.id) {setActiveChore(null);setSelectedTime(null);setCustomTime("");return;}
+  const openTimeLog = (chore,catId) => {
+    if(activeChore?.choreId===chore.id){setActiveChore(null);setSelectedTime(null);setCustomTime("");return;}
     setActiveChore({choreId:chore.id,catId});
-    setSelectedTime(null); setCustomTime("");
+    setSelectedTime(null);setCustomTime("");
     setOpenCats(p=>({...p,[catId]:true}));
   };
-  const confirm = duration => {
+  const confirm = (duration,photoUrl) => {
     if(!activeChore) return;
-    onLogChore(user.id,activeChore.choreId,activeChore.catId,duration);
+    onLogChore(user.id,activeChore.choreId,activeChore.catId,duration,photoUrl||null);
     setActiveChore(null);setSelectedTime(null);setCustomTime("");
+  };
+  const handleAvatarFile = file => {
+    if(!file||!file.type.startsWith("image/")) return;
+    const reader=new FileReader();
+    reader.onload=e=>onPhotoChange(e.target.result);
+    reader.readAsDataURL(file);
   };
 
   return (
-    <div style={{padding:"24px 20px 80px",maxWidth:900,margin:"0 auto"}}>
-      <div style={{display:"flex",alignItems:"center",gap:18,paddingBottom:20}}>
-        <div style={{width:72,height:72,borderRadius:"50%",background:`${user.color}22`,border:`3px solid ${user.color}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"2.2rem",boxShadow:`0 0 24px -6px ${user.color}`}}>{user.emoji}</div>
-        <div>
-          <h2 style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.8rem",color:user.color}}>{user.name}</h2>
-          <p style={{color:"#7a7a99",fontSize:"0.9rem"}}>{career.icon} {career.title}</p>
+    <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
+      <input ref={inputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleAvatarFile(e.target.files?.[0])}/>
+
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
+        <Avatar user={user} photo={photo} size={56} editable onClick={()=>inputRef.current?.click()}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:"1.3rem",fontWeight:700,letterSpacing:-0.3}}>{user.name}</div>
+          <div style={{fontSize:"0.7rem",color:DS.muted,marginTop:1}}>{career.title}</div>
+          <div style={{fontSize:"0.6rem",color:DS.dim,marginTop:2}}>לחץ על התמונה לשינוי</div>
         </div>
-        <div style={{marginRight:"auto",textAlign:"left",fontFamily:"'Fredoka One',cursive",fontSize:"2.4rem",color:user.color}}>
-          {score}<br/><small style={{fontSize:"0.8rem",fontFamily:"'Heebo',sans-serif",color:"#7a7a99"}}>נקודות</small>
+        <div style={{textAlign:"left"}}>
+          <div style={{fontVariantNumeric:"tabular-nums",fontSize:"1.8rem",fontWeight:800,color:user.color,letterSpacing:-1}}>{score}</div>
+          <div style={{fontSize:"0.6rem",color:DS.muted,textAlign:"center"}}>נקודות</div>
         </div>
       </div>
 
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+      {/* Next reward progress */}
+      {nextReward && (
+        <div style={{background:DS.surface,borderRadius:12,padding:"11px 14px",border:`1px solid ${DS.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:14}}>
+          <div style={{textAlign:"center",flexShrink:0}}>
+            <div style={{fontSize:"1.5rem"}}>{nextReward.emoji||"🎁"}</div>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+              <span style={{fontSize:"0.78rem",fontWeight:600}}>{nextReward.title}</span>
+              <span style={{fontSize:"0.68rem",color:DS.muted}}>עוד {nextReward.pts-score} נק'</span>
+            </div>
+            <div style={{height:4,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${Math.min((score/nextReward.pts)*100,100)}%`,background:user.color,borderRadius:2,transition:"width .6s"}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
+              <span style={{fontSize:"0.62rem",color:user.color,fontWeight:700}}>{score}</span>
+              <span style={{fontSize:"0.62rem",color:DS.dim}}>{nextReward.pts}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Badges */}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
         {BADGES.map(b=>{const earned=b.cond(userStats);return(
-          <div key={b.id} style={{background:"#1a1a2e",border:`1px solid ${earned?user.color:"rgba(255,255,255,.08)"}`,borderRadius:20,padding:"5px 12px",fontSize:"0.78rem",fontWeight:600,color:earned?user.color:"#7a7a99"}}>{b.icon} {b.title}</div>
+          <div key={b.id} style={{background:DS.surface,border:`1px solid ${earned?user.color:DS.border}`,borderRadius:14,padding:"4px 10px",fontSize:"0.7rem",fontWeight:600,color:earned?user.color:DS.dim}}>{b.icon} {b.title}</div>
         );})}
       </div>
 
-      <KidRewards user={user} rewards={rewards||[]} log={log} bonus={{}} onRedeemReward={onRedeemReward}/>
+      {/* Rewards */}
+      <KidRewards user={user} rewards={rewards||[]} log={log} bonus={bonus} onRedeemReward={onRedeemReward}/>
 
+      {/* TODAY label */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>TODAY</div>
+
+      {/* Chore categories */}
       {CHORE_CATEGORIES.map(cat=>{
         const doneInCat=cat.chores.filter(c=>countToday(user.id,c.id,log)>0).length;
         const isOpen=openCats[cat.id];
-        return(
-          <div key={cat.id} style={{marginBottom:12}}>
-            <div onClick={()=>toggleCat(cat.id)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"10px 14px",background:"#1a1a2e",borderRadius:12,border:"1px solid rgba(255,255,255,.08)",userSelect:"none"}}
-              onMouseEnter={e=>e.currentTarget.style.background="#1e1e35"}
-              onMouseLeave={e=>e.currentTarget.style.background="#1a1a2e"}>
-              <span style={{fontSize:"1.2rem"}}>{cat.icon}</span>
-              <span style={{fontWeight:700,flex:1}}>{cat.title}</span>
-              <span style={{fontSize:"0.78rem",color:doneInCat>0?user.color:"#7a7a99"}}>{doneInCat}/{cat.chores.length}</span>
-              <span style={{color:"#7a7a99",transition:"transform .2s",transform:isOpen?"rotate(180deg)":""}}>▼</span>
+        return (
+          <div key={cat.id} style={{marginBottom:7}}>
+            <div onClick={()=>toggleCat(cat.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:DS.surface,borderRadius:isOpen?"12px 12px 0 0":12,border:`1px solid ${DS.border}`,borderBottom:isOpen?"1px solid transparent":"",cursor:"pointer",userSelect:"none"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#161616"}
+              onMouseLeave={e=>e.currentTarget.style.background=DS.surface}>
+              <span style={{fontSize:"1rem"}}>{cat.icon}</span>
+              <span style={{flex:1,fontSize:"0.85rem",fontWeight:600}}>{cat.title}</span>
+              <div style={{display:"flex",gap:2}}>
+                {cat.chores.slice(0,5).map((_,i)=>(
+                  <div key={i} style={{width:5,height:5,borderRadius:"50%",background:i<doneInCat?user.color:"rgba(255,255,255,.1)"}}/>
+                ))}
+              </div>
+              <span style={{fontSize:"0.62rem",color:doneInCat>0?user.color:DS.muted}}>{doneInCat}/{cat.chores.length}</span>
+              <span style={{color:DS.dim,fontSize:"0.65rem",transition:"transform .2s",transform:isOpen?"rotate(180deg)":""}}>▾</span>
             </div>
             {isOpen&&(
-              <div style={{display:"flex",flexDirection:"column",gap:6,padding:"6px 4px 2px"}}>
-                {cat.chores.map(chore=>{
+              <div style={{background:DS.surface,borderRadius:"0 0 12px 12px",border:`1px solid ${DS.border}`,borderTop:"none",padding:"3px 0"}}>
+                {cat.chores.map((chore,ci)=>{
                   const timesToday=countToday(user.id,chore.id,log);
                   const lastLog=[...log].reverse().find(e=>e.userId===user.id&&e.choreId===chore.id);
                   const isActive=activeChore?.choreId===chore.id;
-                  return(
+                  return (
                     <div key={chore.id}>
-                      <div onClick={()=>openTimeLog(chore,cat.id)} style={{display:"flex",alignItems:"center",gap:10,background:isActive?"rgba(255,255,255,.08)":"rgba(255,255,255,.03)",borderRadius:10,padding:"10px 14px",cursor:"pointer",border:`1px solid ${isActive?user.color:timesToday>0?user.color+"55":"transparent"}`,transition:"all .2s"}}
-                        onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.07)"}
-                        onMouseLeave={e=>e.currentTarget.style.background=isActive?"rgba(255,255,255,.08)":"rgba(255,255,255,.03)"}>
-                        <div style={{width:24,height:24,borderRadius:7,border:`2px solid ${timesToday>0?user.color:"rgba(255,255,255,.2)"}`,background:timesToday>0?user.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"0.72rem",fontWeight:800,color:"#000"}}>{timesToday>0?timesToday:""}</div>
-                        <span style={{flex:1,fontSize:"0.9rem",color:"#f0f0ff"}}>{chore.name}</span>
-                        {lastLog?.duration&&<span style={{fontSize:"0.72rem",color:"#7a7a99"}}>⏱ {lastLog.duration}ד'</span>}
-                        <span style={{fontSize:"0.72rem",fontWeight:700,background:"rgba(255,255,255,.08)",borderRadius:8,padding:"2px 7px",color:user.color}}>{chore.pts}⭐</span>
+                      <div onClick={()=>openTimeLog(chore,cat.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderBottom:ci<cat.chores.length-1?`1px solid ${DS.border}`:"none",cursor:"pointer",background:isActive?"rgba(255,255,255,.04)":"transparent"}}
+                        onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.04)"}
+                        onMouseLeave={e=>e.currentTarget.style.background=isActive?"rgba(255,255,255,.04)":"transparent"}>
+                        <div style={{width:22,height:22,borderRadius:7,border:`1.5px solid ${timesToday>0?user.color:"rgba(255,255,255,.12)"}`,background:timesToday>0?user.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"0.62rem",fontWeight:800,color:"#000"}}>{timesToday>0?timesToday:""}</div>
+                        <span style={{flex:1,fontSize:"0.82rem"}}>{chore.name}</span>
+                        {chore.requiresPhoto&&<span style={{fontSize:"0.65rem",color:DS.dim}}>📷</span>}
+                        {lastLog?.duration&&<span style={{fontSize:"0.65rem",color:DS.dim}}>⏱{lastLog.duration}ד'</span>}
+                        <span style={{fontSize:"0.68rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{chore.pts}</span>
                       </div>
                       {isActive&&(
-                        <div style={{background:"#16213e",borderRadius:12,padding:"12px 14px",marginTop:4,border:`1px solid ${user.color}`}}>
-                          <div style={{fontSize:"0.82rem",color:"#7a7a99",marginBottom:8}}>⏱ כמה זמן לקח לך?</div>
-                          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-                            {[2,5,10,15,20,30].map(m=>(
-                              <button key={m} onClick={()=>setSelectedTime(m)} style={{padding:"5px 12px",borderRadius:20,background:selectedTime===m?user.color:"rgba(255,255,255,.06)",border:`1px solid ${selectedTime===m?user.color:"rgba(255,255,255,.1)"}`,color:selectedTime===m?"#000":"#f0f0ff",fontFamily:"'Heebo',sans-serif",fontSize:"0.82rem",cursor:"pointer"}}>{m} דק'</button>
-                            ))}
-                          </div>
-                          <div style={{display:"flex",gap:6,marginBottom:8}}>
-                            <input type="number" placeholder="זמן אחר (דקות)" value={customTime} onChange={e=>setCustomTime(e.target.value)} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,color:"#f0f0ff",padding:"6px 10px",fontFamily:"'Heebo',sans-serif",fontSize:"0.85rem"}}/>
-                            <button onClick={()=>confirm(customTime?parseInt(customTime):selectedTime)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:"0.85rem",padding:"7px 16px",cursor:"pointer"}}>אישור ✓</button>
-                          </div>
-                          <button onClick={()=>confirm(null)} style={{background:"none",border:"1px solid rgba(255,255,255,.1)",borderRadius:20,color:"#7a7a99",fontFamily:"'Heebo',sans-serif",fontSize:"0.8rem",padding:"4px 12px",cursor:"pointer"}}>דלג על זמן</button>
-                        </div>
+                        chore.requiresPhoto
+                          ? <PhotoUpload user={user} chore={chore} onDone={url=>confirm(null,url)} onSkip={()=>confirm(null,null)}/>
+                          : <div style={{background:DS.surface2,padding:"12px 14px",borderBottom:ci<cat.chores.length-1?`1px solid ${DS.border}`:"none"}}>
+                              <div style={{fontSize:"0.78rem",color:DS.muted,marginBottom:8}}>⏱ כמה זמן לקח לך?</div>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                                {[2,5,10,15,20,30].map(m=>(
+                                  <button key={m} onClick={()=>setSelectedTime(m)} style={{padding:"5px 11px",borderRadius:18,background:selectedTime===m?user.color:"rgba(255,255,255,.05)",border:`1px solid ${selectedTime===m?user.color:"rgba(255,255,255,.08)"}`,color:selectedTime===m?"#000":DS.text,fontFamily:"-apple-system,sans-serif",fontSize:"0.78rem",cursor:"pointer"}}>{m} דק'</button>
+                                ))}
+                              </div>
+                              <div style={{display:"flex",gap:6,marginBottom:8}}>
+                                <input type="number" placeholder="זמן אחר" value={customTime} onChange={e=>setCustomTime(e.target.value)} style={{flex:1,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:DS.text,padding:"6px 10px",fontFamily:"-apple-system,sans-serif",fontSize:"0.82rem"}}/>
+                                <button onClick={()=>confirm(customTime?parseInt(customTime):selectedTime)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.82rem",padding:"7px 14px",cursor:"pointer"}}>✓</button>
+                              </div>
+                              <button onClick={()=>confirm(null)} style={{background:"none",border:"1px solid rgba(255,255,255,.07)",borderRadius:18,color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem",padding:"4px 12px",cursor:"pointer"}}>דלג</button>
+                            </div>
                       )}
                     </div>
                   );
@@ -489,27 +725,30 @@ function KidPage({ user, log, onLogChore, rewards, onRedeemReward }) {
         );
       })}
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",margin:"28px 0 14px"}}>📋 היסטוריה אחרונה</div>
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {[...ulog].reverse().slice(0,8).map((e,i)=>(
-          <div key={i} style={{background:"#1a1a2e",borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:12,border:"1px solid rgba(255,255,255,.08)",fontSize:"0.9rem"}}>
-            <div style={{width:10,height:10,borderRadius:"50%",background:user.color,flexShrink:0}}/>
-            <div style={{flex:1}}>{e.choreTitle}{e.duration&&<span style={{fontSize:"0.72rem",color:"#7a7a99"}}> ⏱ {e.duration} דקות</span>}</div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
-              <span style={{fontWeight:700,color:user.color,fontSize:"0.85rem"}}>+{e.pts}</span>
-              <span style={{color:"#7a7a99",fontSize:"0.78rem"}}>{timeAgo(e.ts)}</span>
+      {/* History */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,margin:"20px 0 10px",textTransform:"uppercase"}}>HISTORY</div>
+      <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"0 14px"}}>
+        {[...ulog].reverse().slice(0,8).map((e,i,arr)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${DS.border}`:"none",fontSize:"0.8rem"}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:user.color,flexShrink:0}}/>
+            <div style={{flex:1}}>
+              {e.choreTitle}
+              {e.duration&&<span style={{fontSize:"0.68rem",color:DS.dim}}> ⏱{e.duration}ד'</span>}
+              {e.photoUrl&&<a href={e.photoUrl} target="_blank" rel="noreferrer" style={{display:"inline-block",marginRight:5,verticalAlign:"middle"}}><img src={e.photoUrl} alt="הוכחה" style={{width:26,height:26,borderRadius:5,objectFit:"cover",border:"1px solid rgba(255,255,255,.1)"}}/></a>}
             </div>
+            <span style={{fontSize:"0.75rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{e.pts}</span>
+            <span style={{fontSize:"0.62rem",color:DS.dim}}>{timeAgo(e.ts)}</span>
           </div>
         ))}
-        {ulog.length===0&&<div style={{textAlign:"center",color:"#7a7a99",padding:"40px 20px"}}><div style={{fontSize:"3rem",marginBottom:12}}>📋</div>עדיין לא בוצעו משימות</div>}
+        {ulog.length===0&&<div style={{textAlign:"center",color:DS.muted,padding:"28px",fontSize:"0.82rem"}}>עדיין לא בוצעו משימות</div>}
       </div>
     </div>
   );
 }
 
 // ─── PARENT PAGE ──────────────────────────────────────────────────────────────
-function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry, onDeleteEntry, rewards, onAddReward, onDeleteReward, onRedeemReward }) {
-  const kids   = USERS.filter(u=>u.role==="kid");
+function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry, onDeleteEntry, rewards, onAddReward, onDeleteReward, onRedeemReward, avatars }) {
+  const kids = USERS.filter(u=>u.role==="kid");
   const weekLog = getLastDaysLog(log,7);
   const [editingIdx, setEditingIdx] = useState(null);
   const [newReward, setNewReward] = useState({title:"",pts:"",emoji:"🎁"});
@@ -517,61 +756,63 @@ function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry
   const REWARD_EMOJIS = ["🎁","🍦","🎮","🎬","🍕","🎠","🚗","✈️","🎪","💰","📱","🏆","🌟","🎯","🎲"];
 
   return (
-    <div style={{padding:"24px 20px 80px",maxWidth:900,margin:"0 auto"}}>
-      <div style={{display:"flex",alignItems:"center",gap:18,paddingBottom:20}}>
-        <div style={{width:72,height:72,borderRadius:"50%",background:`${user.color}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"2.2rem"}}>{user.emoji}</div>
+    <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+        <div style={{width:48,height:48,borderRadius:"50%",background:`${user.color}15`,border:`1.5px solid ${user.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.3rem",fontWeight:800,color:user.color}}>{user.name[0]}</div>
         <div>
-          <h2 style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.8rem",color:user.color}}>{user.name} — הורה 👀</h2>
-          <p style={{color:"#7a7a99",fontSize:"0.9rem"}}>ניהול ניקודים וצפייה בביצועים</p>
+          <div style={{fontSize:"1.2rem",fontWeight:700}}>{user.name} — הורה</div>
+          <div style={{fontSize:"0.7rem",color:DS.muted}}>ניהול ניקודים ופרסים</div>
         </div>
       </div>
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>👦 סיכום ילדים</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:14,marginBottom:28}}>
+      {/* Kid summaries */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>KIDS SUMMARY</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
         {kids.map(k=>{
           const sc=getUserScore(k.id,log,bonus); const wk=weekLog.filter(e=>e.userId===k.id).length;
-          return(
-            <div key={k.id} onClick={()=>onSwitchUser(k.id)} style={{background:"#1a1a2e",borderRadius:18,padding:20,border:`1px solid ${k.color}33`,textAlign:"center",cursor:"pointer",transition:"transform .2s"}}
-              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-4px)";e.currentTarget.style.boxShadow="0 8px 30px rgba(0,0,0,.3)";}}
+          return (
+            <div key={k.id} onClick={()=>onSwitchUser(k.id)} style={{background:DS.surface,borderRadius:14,padding:"14px 10px",border:`1px solid ${k.color}22`,textAlign:"center",cursor:"pointer",transition:"transform .2s"}}
+              onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="0 8px 20px rgba(0,0,0,.4)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>
-              <div style={{fontSize:"2.5rem",marginBottom:8}}>{k.emoji}</div>
-              <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:k.color}}>{k.name}</div>
-              <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"2rem",color:k.color,margin:"4px 0"}}>{sc}</div>
-              <div style={{fontSize:"0.78rem",color:"#7a7a99"}}>⭐ נקודות · {wk} השבוע</div>
+              <Avatar user={k} photo={avatars?.[k.id]} size={40} style={{margin:"0 auto 8px"}}/>
+              <div style={{fontSize:"0.82rem",fontWeight:700,color:k.color,marginTop:6}}>{k.name}</div>
+              <div style={{fontSize:"1.3rem",fontWeight:800,color:k.color,fontVariantNumeric:"tabular-nums"}}>{sc}</div>
+              <div style={{fontSize:"0.62rem",color:DS.muted}}>{wk} השבוע</div>
             </div>
           );
         })}
       </div>
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>🎛 נקודות בונוס</div>
-      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:28}}>
+      {/* Bonus */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>BONUS POINTS</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
         {kids.map(k=>(
-          <div key={k.id} style={{background:"#1a1a2e",borderRadius:14,padding:"14px 18px",border:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span style={{fontSize:"1.4rem"}}>{k.emoji}</span>
-            <span style={{fontWeight:600,color:k.color,flex:1,minWidth:60}}>{k.name}</span>
-            {[-10,-5,-1].map(n=>(
-              <button key={n} onClick={()=>onAdjustBonus(k.id,n)} style={{width:36,height:36,borderRadius:"50%",border:"none",background:"rgba(255,100,100,.15)",color:"#FF6B6B",fontSize:"0.82rem",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:700}}>{n}</button>
-            ))}
-            <span style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.3rem",color:k.color,minWidth:44,textAlign:"center"}}>{bonus[k.id]||0}</span>
-            {[1,5,10].map(n=>(
-              <button key={n} onClick={()=>onAdjustBonus(k.id,n)} style={{width:36,height:36,borderRadius:"50%",border:"none",background:"rgba(100,255,200,.15)",color:"#4ECDC4",fontSize:"0.82rem",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:700}}>+{n}</button>
-            ))}
+          <div key={k.id} style={{background:DS.surface,borderRadius:12,padding:"12px 14px",border:`1px solid ${DS.border}`,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <Avatar user={k} photo={avatars?.[k.id]} size={30}/>
+            <span style={{fontWeight:600,color:k.color,flex:1,fontSize:"0.85rem"}}>{k.name}</span>
+            {[-10,-5,-1].map(n=><button key={n} onClick={()=>onAdjustBonus(k.id,n)} style={{width:32,height:32,borderRadius:"50%",border:"none",background:"rgba(255,69,58,.12)",color:"#FF453A",fontSize:"0.78rem",cursor:"pointer",fontFamily:"-apple-system,sans-serif",fontWeight:700}}>{n}</button>)}
+            <span style={{fontSize:"1.1rem",fontWeight:800,color:k.color,minWidth:36,textAlign:"center",fontVariantNumeric:"tabular-nums"}}>{bonus[k.id]||0}</span>
+            {[1,5,10].map(n=><button key={n} onClick={()=>onAdjustBonus(k.id,n)} style={{width:32,height:32,borderRadius:"50%",border:"none",background:"rgba(48,209,88,.12)",color:"#30D158",fontSize:"0.78rem",cursor:"pointer",fontFamily:"-apple-system,sans-serif",fontWeight:700}}>+{n}</button>)}
           </div>
         ))}
       </div>
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>🌟 תמונות קריירה — לפי ניקוד</div>
+      {/* Career */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>CAREER STATUS</div>
       {kids.map(k=>{
         const sc=getUserScore(k.id,log,bonus);
-        return(
-          <div key={k.id} style={{marginBottom:24}}>
-            <div style={{fontWeight:700,color:k.color,marginBottom:10}}>{k.emoji} {k.name} · {sc} נקודות</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:12}}>
+        return (
+          <div key={k.id} style={{marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <Avatar user={k} photo={avatars?.[k.id]} size={24}/>
+              <span style={{fontSize:"0.82rem",fontWeight:700,color:k.color}}>{k.name} · {sc} נקודות</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(90px,1fr))",gap:8}}>
               {CAREERS.map(c=>{const unlocked=sc>=c.pts;return(
-                <div key={c.pts} style={{background:"#1a1a2e",borderRadius:16,padding:"16px 12px",textAlign:"center",border:`2px solid ${unlocked?k.color:"rgba(255,255,255,.08)"}`,opacity:unlocked?1:.4,transition:"all .2s"}}>
-                  <div style={{fontSize:"2.5rem"}}>{c.icon}</div>
-                  <div style={{fontSize:"0.75rem",fontWeight:700,marginTop:6}}>{c.title}</div>
-                  <div style={{fontSize:"0.68rem",color:"#7a7a99"}}>{c.pts===0?"התחלה":c.pts+" נק'"} {unlocked?"✅":""}</div>
+                <div key={c.pts} style={{background:DS.surface,borderRadius:10,padding:"10px 8px",textAlign:"center",border:`1px solid ${unlocked?k.color:DS.border}`,opacity:unlocked?1:.35}}>
+                  <div style={{fontSize:"0.72rem",fontWeight:700,color:unlocked?k.color:DS.muted}}>{c.title}</div>
+                  <div style={{fontSize:"0.6rem",color:DS.dim,marginTop:2}}>{c.pts===0?"התחלה":c.pts+" נק'"}{unlocked?" ✓":""}</div>
                 </div>
               );})}
             </div>
@@ -579,139 +820,90 @@ function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry
         );
       })}
 
-      {/* ── REWARDS MANAGEMENT ── */}
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>🎁 ניהול פרסים</div>
-
-      {/* Existing rewards */}
+      {/* Rewards */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>REWARDS</div>
       {(rewards||[]).length>0&&(
-        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
           {(rewards||[]).map(r=>{
             const totalRedeemed=(r.redeemedBy||[]).length;
             return(
-              <div key={r.id} style={{background:"#1a1a2e",borderRadius:14,padding:"12px 16px",border:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                <span style={{fontSize:"1.6rem"}}>{r.emoji||"🎁"}</span>
+              <div key={r.id} style={{background:DS.surface,borderRadius:12,padding:"11px 14px",border:`1px solid ${DS.border}`,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span style={{fontSize:"1.3rem"}}>{r.emoji||"🎁"}</span>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700}}>{r.title}</div>
-                  <div style={{fontSize:"0.78rem",color:"#7a7a99"}}>{r.pts} נקודות · מומש {totalRedeemed} פעמים</div>
-                  {(r.redeemedBy||[]).length>0&&(
-                    <div style={{fontSize:"0.72rem",color:"#4ECDC4",marginTop:2}}>
-                      {[...r.redeemedBy].reverse().slice(0,3).map((x,i)=>{
-                        const u=USERS.find(u=>u.id===x.uid);
-                        return <span key={i} style={{marginLeft:8}}>{u?.emoji} {u?.name} · {timeAgo(x.ts)}</span>;
-                      })}
-                    </div>
-                  )}
+                  <div style={{fontWeight:700,fontSize:"0.85rem"}}>{r.title}</div>
+                  <div style={{fontSize:"0.7rem",color:DS.muted}}>{r.pts} נקודות · מומש {totalRedeemed}×</div>
                 </div>
-                {/* Manual redeem per kid */}
-                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:4}}>
                   {kids.map(k=>{
-                    const sc=getUserScore(k.id,log,bonus);
-                    const canRedeem=sc>=r.pts;
-                    return(
-                      <button key={k.id} onClick={()=>canRedeem&&onRedeemReward(r.id,k.id)} title={canRedeem?`מימוש עבור ${k.name}`:`${k.name} חסר ${r.pts-sc} נק'`} style={{width:32,height:32,borderRadius:"50%",border:`2px solid ${canRedeem?k.color:"rgba(255,255,255,.1)"}`,background:"transparent",fontSize:"1rem",cursor:canRedeem?"pointer":"default",opacity:canRedeem?1:0.4}}>{k.emoji}</button>
-                    );
+                    const sc=getUserScore(k.id,log,bonus); const can=sc>=r.pts;
+                    return <button key={k.id} onClick={()=>can&&onRedeemReward(r.id,k.id)} title={can?`מימוש עבור ${k.name}`:`${k.name} חסר ${r.pts-sc} נק'`} style={{width:28,height:28,borderRadius:"50%",border:`1.5px solid ${can?k.color:"rgba(255,255,255,.08)"}`,background:"transparent",cursor:can?"pointer":"default",opacity:can?1:0.3,overflow:"hidden",padding:0}}>
+                      {avatars?.[k.id] ? <img src={avatars[k.id]} style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:"0.72rem",fontWeight:800,color:k.color}}>{k.name[0]}</span>}
+                    </button>;
                   })}
                 </div>
-                <button onClick={()=>onDeleteReward(r.id)} style={{background:"rgba(255,80,80,.12)",border:"1px solid rgba(255,80,80,.2)",borderRadius:8,color:"#FF6B6B",padding:"5px 10px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:"0.8rem"}}>🗑️</button>
+                <button onClick={()=>onDeleteReward(r.id)} style={{background:"rgba(255,69,58,.1)",border:"1px solid rgba(255,69,58,.2)",borderRadius:7,color:"#FF453A",padding:"4px 9px",cursor:"pointer",fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem"}}>🗑️</button>
               </div>
             );
           })}
         </div>
       )}
-
-      {/* Add new reward */}
-      {!addingReward?(
-        <button onClick={()=>setAddingReward(true)} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.04)",border:"1px dashed rgba(255,255,255,.15)",borderRadius:14,padding:"12px 18px",cursor:"pointer",color:"#7a7a99",fontFamily:"'Heebo',sans-serif",fontSize:"0.9rem",width:"100%",marginBottom:28}}>
-          ＋ הוסף פרס חדש
-        </button>
-      ):(
-        <div style={{background:"#1a1a2e",borderRadius:14,padding:16,border:`1px solid ${user.color}`,marginBottom:28}}>
-          <div style={{fontWeight:700,marginBottom:12,color:user.color}}>פרס חדש</div>
-          {/* Emoji picker */}
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-            {REWARD_EMOJIS.map(e=>(
-              <button key={e} onClick={()=>setNewReward(p=>({...p,emoji:e}))} style={{width:36,height:36,borderRadius:8,border:`2px solid ${newReward.emoji===e?user.color:"rgba(255,255,255,.1)"}`,background:newReward.emoji===e?user.color+"22":"transparent",fontSize:"1.2rem",cursor:"pointer"}}>{e}</button>
-            ))}
+      {!addingReward
+        ? <button onClick={()=>setAddingReward(true)} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.03)",border:"1px dashed rgba(255,255,255,.1)",borderRadius:12,padding:"11px 14px",cursor:"pointer",color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.85rem",width:"100%",marginBottom:20}}>＋ הוסף פרס חדש</button>
+        : <div style={{background:DS.surface,borderRadius:12,padding:14,border:`1px solid ${user.color}44`,marginBottom:20}}>
+            <div style={{fontWeight:700,marginBottom:10,color:user.color,fontSize:"0.9rem"}}>פרס חדש</div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
+              {REWARD_EMOJIS.map(e=><button key={e} onClick={()=>setNewReward(p=>({...p,emoji:e}))} style={{width:34,height:34,borderRadius:8,border:`1.5px solid ${newReward.emoji===e?user.color:"rgba(255,255,255,.08)"}`,background:newReward.emoji===e?`${user.color}22`:"transparent",fontSize:"1.1rem",cursor:"pointer"}}>{e}</button>)}
+            </div>
+            <input placeholder="שם הפרס" value={newReward.title} onChange={e=>setNewReward(p=>({...p,title:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:9,color:DS.text,padding:"9px 12px",fontFamily:"-apple-system,sans-serif",fontSize:"0.85rem",marginBottom:8,direction:"rtl"}}/>
+            <input type="number" placeholder="כמה נקודות?" value={newReward.pts} onChange={e=>setNewReward(p=>({...p,pts:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:9,color:DS.text,padding:"9px 12px",fontFamily:"-apple-system,sans-serif",fontSize:"0.85rem",marginBottom:10,direction:"rtl"}}/>
+            <div style={{display:"flex",gap:7}}>
+              <button onClick={()=>{if(!newReward.title||!newReward.pts)return;onAddReward({title:newReward.title,pts:parseInt(newReward.pts),emoji:newReward.emoji});setNewReward({title:"",pts:"",emoji:"🎁"});setAddingReward(false);}} style={{flex:1,background:user.color,border:"none",borderRadius:9,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.85rem",padding:"9px",cursor:"pointer"}}>✓ שמור</button>
+              <button onClick={()=>setAddingReward(false)} style={{background:"rgba(255,255,255,.05)",border:"none",borderRadius:9,color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.85rem",padding:"9px 14px",cursor:"pointer"}}>ביטול</button>
+            </div>
           </div>
-          <input
-            placeholder="שם הפרס (למשל: גלידה, זמן מסך, כסף...)"
-            value={newReward.title}
-            onChange={e=>setNewReward(p=>({...p,title:e.target.value}))}
-            style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,color:"#f0f0ff",padding:"10px 12px",fontFamily:"'Heebo',sans-serif",fontSize:"0.9rem",marginBottom:10,direction:"rtl"}}
-          />
-          <input
-            type="number"
-            placeholder="כמה נקודות צריך?"
-            value={newReward.pts}
-            onChange={e=>setNewReward(p=>({...p,pts:e.target.value}))}
-            style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,color:"#f0f0ff",padding:"10px 12px",fontFamily:"'Heebo',sans-serif",fontSize:"0.9rem",marginBottom:12,direction:"rtl"}}
-          />
-          <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{
-              if(!newReward.title||!newReward.pts) return;
-              onAddReward({title:newReward.title,pts:parseInt(newReward.pts),emoji:newReward.emoji});
-              setNewReward({title:"",pts:"",emoji:"🎁"});
-              setAddingReward(false);
-            }} style={{flex:1,background:user.color,border:"none",borderRadius:10,color:"#000",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:"0.9rem",padding:"10px",cursor:"pointer"}}>
-              ✓ שמור פרס
-            </button>
-            <button onClick={()=>setAddingReward(false)} style={{background:"rgba(255,255,255,.06)",border:"none",borderRadius:10,color:"#7a7a99",fontFamily:"'Heebo',sans-serif",fontSize:"0.9rem",padding:"10px 16px",cursor:"pointer"}}>
-              ביטול
-            </button>
-          </div>
-        </div>
-      )}
+      }
 
-      <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:"#7a7a99",marginBottom:14}}>📋 כל הפעילות — עריכה</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {/* Activity log */}
+      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>ACTIVITY LOG</div>
+      <div style={{display:"flex",flexDirection:"column",gap:7}}>
         {[...log].map((e,origIdx)=>({...e,origIdx})).reverse().map(({origIdx,...e})=>{
-          const u=USERS.find(u=>u.id===e.userId);
-          const isEditing=editingIdx===origIdx;
-          return(
-            <div key={origIdx} style={{background:"#1a1a2e",borderRadius:14,padding:"12px 16px",border:`1px solid ${isEditing?user.color:"rgba(255,255,255,.08)"}`,fontSize:"0.9rem"}}>
-              {/* Row */}
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div style={{width:10,height:10,borderRadius:"50%",background:u?.color,flexShrink:0}}/>
-                <span style={{fontSize:"1.1rem"}}>{u?.emoji}</span>
+          const u=USERS.find(u=>u.id===e.userId); const isEditing=editingIdx===origIdx;
+          return (
+            <div key={origIdx} style={{background:DS.surface,borderRadius:12,padding:"11px 14px",border:`1px solid ${isEditing?user.color:DS.border}`,fontSize:"0.82rem"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <Avatar user={u} photo={avatars?.[u?.id]} size={26}/>
                 <div style={{flex:1}}>
-                  <span style={{fontWeight:600,color:u?.color}}>{u?.name}</span>
-                  <span style={{color:"#7a7a99"}}> · </span>
+                  <span style={{fontWeight:700,color:u?.color}}>{u?.name}</span>
+                  <span style={{color:DS.muted}}> · </span>
                   <span>{e.choreTitle}</span>
-                  {e.duration&&<span style={{fontSize:"0.75rem",color:"#7a7a99"}}> ⏱ {e.duration}ד'</span>}
-                  <div style={{fontSize:"0.72rem",color:"#555",marginTop:2}}>{timeAgo(e.ts)}</div>
+                  {e.duration&&<span style={{fontSize:"0.7rem",color:DS.dim}}> ⏱{e.duration}ד'</span>}
+                  {e.photoUrl&&<a href={e.photoUrl} target="_blank" rel="noreferrer" style={{display:"inline-block",marginRight:4,verticalAlign:"middle"}}><img src={e.photoUrl} alt="📷" style={{width:22,height:22,borderRadius:4,objectFit:"cover",border:"1px solid rgba(255,255,255,.1)"}}/></a>}
+                  <div style={{fontSize:"0.65rem",color:DS.dim,marginTop:1}}>{timeAgo(e.ts)}</div>
                 </div>
-                <div style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:u?.color}}>+{e.pts}</div>
-                <button onClick={()=>setEditingIdx(isEditing?null:origIdx)} style={{background:isEditing?"rgba(255,100,100,.15)":"rgba(255,255,255,.06)",border:"none",borderRadius:8,color:isEditing?"#FF6B6B":"#7a7a99",padding:"5px 10px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:"0.8rem"}}>
-                  {isEditing?"✕ סגור":"✏️ עריכה"}
+                <span style={{fontSize:"0.85rem",fontWeight:800,color:u?.color,fontVariantNumeric:"tabular-nums"}}>+{e.pts}</span>
+                <button onClick={()=>setEditingIdx(isEditing?null:origIdx)} style={{background:isEditing?"rgba(255,69,58,.12)":"rgba(255,255,255,.05)",border:"none",borderRadius:7,color:isEditing?"#FF453A":DS.muted,padding:"4px 9px",cursor:"pointer",fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem"}}>
+                  {isEditing?"✕":"✏️"}
                 </button>
               </div>
-              {/* Edit panel */}
               {isEditing&&(
-                <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",gap:10}}>
-                  {/* Change points */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span style={{fontSize:"0.82rem",color:"#7a7a99",minWidth:80}}>נקודות:</span>
-                    {[-5,-2,-1,1,2,5].map(n=>(
-                      <button key={n} onClick={()=>onEditEntry(origIdx,"pts",e.pts+n)} style={{padding:"4px 10px",borderRadius:8,border:"none",background:n>0?"rgba(100,255,200,.12)":"rgba(255,100,100,.12)",color:n>0?"#4ECDC4":"#FF6B6B",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:"0.82rem",cursor:"pointer"}}>{n>0?"+":""}{n}</button>
-                    ))}
-                    <span style={{fontFamily:"'Fredoka One',cursive",fontSize:"1.2rem",color:u?.color,marginRight:"auto"}}>{e.pts}</span>
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:"0.75rem",color:DS.muted,minWidth:60}}>נקודות:</span>
+                    {[-5,-2,-1,1,2,5].map(n=><button key={n} onClick={()=>onEditEntry(origIdx,"pts",e.pts+n)} style={{padding:"3px 9px",borderRadius:7,border:"none",background:n>0?"rgba(48,209,88,.12)":"rgba(255,69,58,.12)",color:n>0?"#30D158":"#FF453A",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.78rem",cursor:"pointer"}}>{n>0?"+":""}{n}</button>)}
+                    <span style={{fontSize:"1rem",fontWeight:800,color:u?.color,marginRight:"auto",fontVariantNumeric:"tabular-nums"}}>{e.pts}</span>
                   </div>
-                  {/* Change duration */}
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span style={{fontSize:"0.82rem",color:"#7a7a99",minWidth:80}}>זמן (דק'):</span>
-                    {[2,5,10,15,20,30].map(m=>(
-                      <button key={m} onClick={()=>onEditEntry(origIdx,"duration",m)} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${e.duration===m?u?.color:"rgba(255,255,255,.1)"}`,background:e.duration===m?u?.color+"22":"transparent",color:e.duration===m?u?.color:"#7a7a99",fontFamily:"'Heebo',sans-serif",fontSize:"0.78rem",cursor:"pointer"}}>{m}</button>
-                    ))}
-                    <button onClick={()=>onEditEntry(origIdx,"duration",null)} style={{padding:"4px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,.1)",background:"transparent",color:"#555",fontFamily:"'Heebo',sans-serif",fontSize:"0.78rem",cursor:"pointer"}}>ללא</button>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:"0.75rem",color:DS.muted,minWidth:60}}>זמן:</span>
+                    {[2,5,10,15,20,30].map(m=><button key={m} onClick={()=>onEditEntry(origIdx,"duration",m)} style={{padding:"3px 9px",borderRadius:7,border:`1px solid ${e.duration===m?u?.color:"rgba(255,255,255,.08)"}`,background:e.duration===m?`${u?.color}22`:"transparent",color:e.duration===m?u?.color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem",cursor:"pointer"}}>{m}</button>)}
+                    <button onClick={()=>onEditEntry(origIdx,"duration",null)} style={{padding:"3px 9px",borderRadius:7,border:"1px solid rgba(255,255,255,.07)",background:"transparent",color:DS.dim,fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem",cursor:"pointer"}}>ללא</button>
                   </div>
-                  {/* Delete */}
-                  <button onClick={()=>{onDeleteEntry(origIdx);setEditingIdx(null);}} style={{alignSelf:"flex-start",background:"rgba(255,80,80,.12)",border:"1px solid rgba(255,80,80,.2)",borderRadius:8,color:"#FF6B6B",padding:"6px 14px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:"0.82rem",fontWeight:700}}>🗑️ מחק רשומה זו</button>
+                  <button onClick={()=>{onDeleteEntry(origIdx);setEditingIdx(null);}} style={{alignSelf:"flex-start",background:"rgba(255,69,58,.1)",border:"1px solid rgba(255,69,58,.2)",borderRadius:8,color:"#FF453A",padding:"5px 12px",cursor:"pointer",fontFamily:"-apple-system,sans-serif",fontSize:"0.78rem",fontWeight:700}}>🗑️ מחק רשומה</button>
                 </div>
               )}
             </div>
           );
         })}
-        {log.length===0&&<div style={{textAlign:"center",color:"#7a7a99",padding:40}}>עדיין אין פעילות</div>}
+        {log.length===0&&<div style={{textAlign:"center",color:DS.muted,padding:32,fontSize:"0.85rem"}}>עדיין אין פעילות</div>}
       </div>
     </div>
   );
@@ -723,177 +915,145 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState("dash");
   const [log,         setLog]         = useState([]);
   const [bonus,       setBonus]       = useState({ido:0,yotam:0,itai:0});
-  const [rewards,     setRewards]     = useState([]); // [{id,title,pts,emoji,redeemedBy:[{uid,ts}]}]
+  const [rewards,     setRewards]     = useState([]);
+  const [avatars,     setAvatars]     = useState({ido:null,yotam:null,itai:null});
   const [toast,       setToast]       = useState("");
   const [saving,      setSaving]      = useState(false);
   const [pinTarget,   setPinTarget]   = useState(null);
   const { canvasRef, pop }            = useConfetti();
-  const toastTimer  = useRef(null);
-  const saveTimer   = useRef(null);
-  const stateRef    = useRef({log:[], bonus:{ido:0,yotam:0,itai:0}, rewards:[]});
+  const toastTimer = useRef(null), saveTimer = useRef(null);
+  const stateRef = useRef({log:[],bonus:{ido:0,yotam:0,itai:0},rewards:[],avatars:{}});
 
-  // ── Initial load ──
   useEffect(()=>{
-    loadData()
-      .then(data=>{
-        if(data){
-          setLog(data.log||[]);
-          setBonus(data.bonus||{ido:0,yotam:0,itai:0});
-          setRewards(data.rewards||[]);
-          stateRef.current = data;
-        }
-      })
-      .catch(console.error)
-      .finally(()=>setLoading(false));
+    loadData().then(data=>{
+      if(data){
+        setLog(data.log||[]); setBonus(data.bonus||{ido:0,yotam:0,itai:0});
+        setRewards(data.rewards||[]); setAvatars(data.avatars||{});
+        stateRef.current = data;
+      }
+    }).catch(console.error).finally(()=>setLoading(false));
   },[]);
 
-  // ── Poll every 8s so other devices see updates ──
+  useEffect(()=>{ const id=startBrushingWatchdog(()=>stateRef.current.log||[]); return()=>clearInterval(id); },[]);
+
   useEffect(()=>{
     const stop = subscribeToRealtime(data=>{
-      // Only update if data actually changed (compare log length as quick check)
-      if(data.log?.length !== stateRef.current.log?.length ||
-         JSON.stringify(data.bonus) !== JSON.stringify(stateRef.current.bonus)){
-        setLog(data.log||[]);
-        setBonus(data.bonus||{ido:0,yotam:0,itai:0});
-        setRewards(data.rewards||[]);
+      if(data.log?.length!==stateRef.current.log?.length||JSON.stringify(data.bonus)!==JSON.stringify(stateRef.current.bonus)){
+        setLog(data.log||[]); setBonus(data.bonus||{ido:0,yotam:0,itai:0});
+        setRewards(data.rewards||[]); setAvatars(data.avatars||{});
         stateRef.current = data;
       }
     });
     return stop;
   },[]);
 
-  // ── Debounced save ──
-  const persist = useCallback((nextLog, nextBonus, nextRewards)=>{
-    const r = nextRewards !== undefined ? nextRewards : stateRef.current.rewards||[];
-    stateRef.current = {log:nextLog, bonus:nextBonus, rewards:r};
-    clearTimeout(saveTimer.current);
-    setSaving(true);
-    saveTimer.current = setTimeout(async ()=>{
-      try { await saveData({log:nextLog,bonus:nextBonus,rewards:r}); }
-      catch(e){ console.error("Save error",e); }
-      finally { setSaving(false); }
-    }, 600);
+  const persist = useCallback((nextLog,nextBonus,nextRewards,nextAvatars)=>{
+    const r=nextRewards!==undefined?nextRewards:stateRef.current.rewards||[];
+    const av=nextAvatars!==undefined?nextAvatars:stateRef.current.avatars||{};
+    stateRef.current={log:nextLog,bonus:nextBonus,rewards:r,avatars:av};
+    clearTimeout(saveTimer.current); setSaving(true);
+    saveTimer.current=setTimeout(async()=>{
+      try{await saveData({log:nextLog,bonus:nextBonus,rewards:r,avatars:av});}
+      catch(e){console.error("Save error",e);}
+      finally{setSaving(false);}
+    },600);
   },[]);
 
-  const showToast = msg=>{
-    setToast(msg);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(()=>setToast(""),2800);
-  };
+  const showToast=msg=>{setToast(msg);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(""),2800);};
 
-  const switchUser = uid=>{
+  const switchUser=uid=>{
     const user=USERS.find(u=>u.id===uid);
     if(user?.role==="parent"){setPinTarget(user);return;}
-    setCurrentUser(uid);
-    window.scrollTo({top:0,behavior:"smooth"});
+    setCurrentUser(uid); window.scrollTo({top:0,behavior:"smooth"});
   };
+  const handlePinSuccess=()=>{setCurrentUser(pinTarget.id);setPinTarget(null);window.scrollTo({top:0,behavior:"smooth"});};
 
-  const handlePinSuccess = ()=>{
-    setCurrentUser(pinTarget.id);
-    setPinTarget(null);
-    window.scrollTo({top:0,behavior:"smooth"});
-  };
-
-  const handleLogChore = (uid, choreId, catId, duration)=>{
-    const chore=CHORE_CATEGORIES.flatMap(c=>c.chores).find(c=>c.id===choreId);
-    if(!chore) return;
-    const entry={userId:uid,choreId,catId,choreTitle:chore.name,pts:chore.pts,duration:duration||null,ts:Date.now()};
-    setLog(prev=>{
-      const next=[...prev,entry];
-      persist(next, stateRef.current.bonus);
-      return next;
-    });
-    showToast(`✅ ${chore.name} · +${chore.pts} נקודות!`);
+  const handleLogChore=(uid,choreId,catId,duration,photoUrl)=>{
+    const chore=CHORE_CATEGORIES.flatMap(c=>c.chores).find(c=>c.id===choreId); if(!chore) return;
+    const entry={userId:uid,choreId,catId,choreTitle:chore.name,pts:chore.pts,duration:duration||null,photoUrl:photoUrl||null,ts:Date.now()};
+    setLog(prev=>{const next=[...prev,entry];persist(next,stateRef.current.bonus);return next;});
+    showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name} · +${chore.pts} נקודות!`);
     pop();
+    if(entry.photoUrl){const kidName=USERS.find(u=>u.id===uid)?.name||uid;sendEmail(`✅ ${kidName} צחצח שיניים!`,`${kidName} שלח תמונת הוכחה! (+${chore.pts} נקודות)\n${entry.photoUrl}`);}
   };
-
-  const handleAdjustBonus = (uid, amount)=>{
-    setBonus(prev=>{
-      const next={...prev,[uid]:(prev[uid]||0)+amount};
-      persist(stateRef.current.log, next);
-      return next;
-    });
+  const handleAdjustBonus=(uid,amount)=>{
+    setBonus(prev=>{const next={...prev,[uid]:(prev[uid]||0)+amount};persist(stateRef.current.log,next);return next;});
     showToast(`${amount>0?"+":""}${amount} נקודות ל${USERS.find(u=>u.id===uid)?.name}`);
   };
-
-  const handleEditEntry = (idx, field, value)=>{
-    setLog(prev=>{
-      const next = prev.map((e,i)=> i===idx ? {...e,[field]:value} : e);
-      persist(next, stateRef.current.bonus);
-      return next;
-    });
-    showToast(`✏️ רשומה עודכנה`);
+  const handleEditEntry=(idx,field,value)=>{
+    setLog(prev=>{const next=prev.map((e,i)=>i===idx?{...e,[field]:value}:e);persist(next,stateRef.current.bonus);return next;});
+    showToast("✏️ רשומה עודכנה");
   };
-
-  const handleDeleteEntry = (idx)=>{
-    setLog(prev=>{
-      const next = prev.filter((_,i)=> i!==idx);
-      persist(next, stateRef.current.bonus);
-      return next;
-    });
-    showToast(`🗑️ רשומה נמחקה`);
+  const handleDeleteEntry=idx=>{
+    setLog(prev=>{const next=prev.filter((_,i)=>i!==idx);persist(next,stateRef.current.bonus);return next;});
+    showToast("🗑️ רשומה נמחקה");
   };
-
-  const handleAddReward = (reward)=>{
-    const next = [...stateRef.current.rewards||[], {...reward, id: Date.now().toString(), redeemedBy:[]}];
-    setRewards(next);
-    persist(stateRef.current.log, stateRef.current.bonus, next);
+  const handleAddReward=reward=>{
+    const next=[...(stateRef.current.rewards||[]),{...reward,id:Date.now().toString(),redeemedBy:[]}];
+    setRewards(next); persist(stateRef.current.log,stateRef.current.bonus,next);
     showToast(`🎁 פרס "${reward.title}" נוסף!`);
   };
-  const handleDeleteReward = (rid)=>{
-    const next = (stateRef.current.rewards||[]).filter(r=>r.id!==rid);
-    setRewards(next);
-    persist(stateRef.current.log, stateRef.current.bonus, next);
-    showToast(`🗑️ פרס נמחק`);
+  const handleDeleteReward=rid=>{
+    const next=(stateRef.current.rewards||[]).filter(r=>r.id!==rid);
+    setRewards(next); persist(stateRef.current.log,stateRef.current.bonus,next);
+    showToast("🗑️ פרס נמחק");
   };
-  const handleRedeemReward = (rid, uid)=>{
-    const next = (stateRef.current.rewards||[]).map(r=>
-      r.id===rid ? {...r, redeemedBy:[...(r.redeemedBy||[]), {uid, ts:Date.now()}]} : r
-    );
-    setRewards(next);
-    persist(stateRef.current.log, stateRef.current.bonus, next);
-    const reward = next.find(r=>r.id===rid);
-    const kid = USERS.find(u=>u.id===uid);
-    showToast(`🎉 ${kid?.name} מימש: ${reward?.title}!`);
-    pop();
+  const handleRedeemReward=(rid,uid)=>{
+    const next=(stateRef.current.rewards||[]).map(r=>r.id===rid?{...r,redeemedBy:[...(r.redeemedBy||[]),{uid,ts:Date.now()}]}:r);
+    setRewards(next); persist(stateRef.current.log,stateRef.current.bonus,next);
+    const reward=next.find(r=>r.id===rid); const kid=USERS.find(u=>u.id===uid);
+    showToast(`🎉 ${kid?.name} מימש: ${reward?.title}!`); pop();
+  };
+  const handleAvatarChange=(uid,dataUrl)=>{
+    const next={...(stateRef.current.avatars||{}),[uid]:dataUrl};
+    setAvatars(next); persist(stateRef.current.log,stateRef.current.bonus,stateRef.current.rewards,next);
+    showToast("📷 תמונה עודכנה!");
   };
 
   const user = USERS.find(u=>u.id===currentUser);
 
-  if(loading) return(
-    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0f0f1a",color:"#7a7a99",fontFamily:"'Heebo',sans-serif",flexDirection:"column",gap:16}}>
-      <div style={{fontSize:"3rem",animation:"spin 1s linear infinite"}}>⭐</div>
-      <div>טוען נתונים...</div>
+  if(loading) return (
+    <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#000",color:DS.muted,fontFamily:"-apple-system,sans-serif",flexDirection:"column",gap:14}}>
+      <Logo size={56}/>
+      <div style={{fontSize:"0.85rem",marginTop:4}}>טוען...</div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
-  return(
-    <div style={{background:"#0f0f1a",minHeight:"100vh",color:"#f0f0ff",fontFamily:"'Heebo',sans-serif",direction:"rtl"}}>
+  return (
+    <div style={{background:DS.bg,minHeight:"100vh",color:DS.text,fontFamily:"-apple-system,sans-serif",direction:"rtl"}}>
       <style>{`
-        @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
         *{box-sizing:border-box;margin:0;padding:0;}
         input:focus,button{outline:none;}
-        ::-webkit-scrollbar{width:6px;}
-        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px;}
+        ::-webkit-scrollbar{width:4px;}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px;}
       `}</style>
 
       <SyncDot saving={saving}/>
 
       {/* NAV */}
-      <nav style={{position:"sticky",top:0,zIndex:100,background:"rgba(15,15,26,.95)",backdropFilter:"blur(16px)",borderBottom:"1px solid rgba(255,255,255,.08)",padding:"0 20px",display:"flex",alignItems:"center",overflowX:"auto",scrollbarWidth:"none"}}>
-        {[{id:"dash",label:"🏠 דשבורד",color:"#fff"},...USERS.map(u=>({id:u.id,label:`${u.emoji} ${u.name}`,color:u.color}))].map(tab=>(
-          <button key={tab.id} onClick={()=>switchUser(tab.id)} style={{flexShrink:0,padding:"14px 16px",background:"none",border:"none",borderBottom:`3px solid ${currentUser===tab.id?tab.color:"transparent"}`,color:currentUser===tab.id?tab.color:"#7a7a99",fontFamily:"'Heebo',sans-serif",fontSize:"0.88rem",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",transition:"all .2s"}}>
-            {tab.label}
+      <nav style={{position:"sticky",top:0,zIndex:100,background:"rgba(0,0,0,.94)",backdropFilter:"blur(20px) saturate(180%)",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"0 16px",display:"flex",alignItems:"center",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+        <button onClick={()=>switchUser("dash")} style={{flexShrink:0,padding:"13px 4px 13px 0",background:"none",border:"none",borderBottom:`2px solid ${currentUser==="dash"?DS.accent:"transparent"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:7,transition:"all .2s",marginLeft:16}}>
+          <Logo size={20}/>
+          <span style={{fontSize:"0.82rem",fontWeight:600,color:currentUser==="dash"?DS.accent:DS.muted}}>הבית</span>
+        </button>
+        {USERS.map(u=>(
+          <button key={u.id} onClick={()=>switchUser(u.id)} style={{flexShrink:0,padding:"13px 14px",background:"none",border:"none",borderBottom:`2px solid ${currentUser===u.id?u.color:"transparent"}`,color:currentUser===u.id?u.color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.82rem",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",transition:"all .2s",display:"flex",alignItems:"center",gap:7}}>
+            {avatars?.[u.id]&&u.role==="kid"
+              ? <img src={avatars[u.id]} style={{width:18,height:18,borderRadius:"50%",objectFit:"cover",border:`1px solid ${u.color}44`}}/>
+              : <div style={{width:18,height:18,borderRadius:"50%",background:`${u.color}18`,border:`1px solid ${u.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"0.6rem",fontWeight:800,color:u.color}}>{u.name[0]}</div>
+            }
+            {u.name}
           </button>
         ))}
       </nav>
 
-      {currentUser==="dash"  && <Dashboard log={log} bonus={bonus} onSwitchUser={switchUser}/>}
-      {user?.role==="kid"    && <KidPage   user={user} log={log} onLogChore={handleLogChore} rewards={rewards} onRedeemReward={handleRedeemReward}/>}
-      {user?.role==="parent" && <ParentPage user={user} log={log} bonus={bonus} onAdjustBonus={handleAdjustBonus} onSwitchUser={switchUser} onEditEntry={handleEditEntry} onDeleteEntry={handleDeleteEntry} rewards={rewards} onAddReward={handleAddReward} onDeleteReward={handleDeleteReward} onRedeemReward={handleRedeemReward}/>}
+      {currentUser==="dash"  && <Dashboard log={log} bonus={bonus} avatars={avatars} onSwitchUser={switchUser}/>}
+      {user?.role==="kid"    && <KidPage user={user} log={log} bonus={bonus} onLogChore={handleLogChore} rewards={rewards} onRedeemReward={handleRedeemReward} photo={avatars[user.id]} onPhotoChange={url=>handleAvatarChange(user.id,url)}/>}
+      {user?.role==="parent" && <ParentPage user={user} log={log} bonus={bonus} onAdjustBonus={handleAdjustBonus} onSwitchUser={switchUser} onEditEntry={handleEditEntry} onDeleteEntry={handleDeleteEntry} rewards={rewards} onAddReward={handleAddReward} onDeleteReward={handleDeleteReward} onRedeemReward={handleRedeemReward} avatars={avatars}/>}
 
-      {pinTarget && <PinModal user={pinTarget} onSuccess={handlePinSuccess} onCancel={()=>setPinTarget(null)}/>}
+      {pinTarget&&<PinModal user={pinTarget} onSuccess={handlePinSuccess} onCancel={()=>setPinTarget(null)}/>}
       <Toast msg={toast}/>
       <canvas ref={canvasRef} style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:998}}/>
     </div>
