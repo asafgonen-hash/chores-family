@@ -545,7 +545,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
       {/* Last chore */}
       {lastUser && (
         <div style={{background:DS.surface,borderRadius:14,padding:"12px 14px",border:`1px solid ${DS.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-          <Avatar user={lastUser} photo={avatars?.[lastUser.id]} size={36}/>
+          <Avatar user={lastUser} photo={avatars?.[lastUser.id]} size={48}/>
           <div>
             <div style={{fontSize:"0.68rem",color:DS.muted}}>המשימה האחרונה</div>
             <div style={{fontSize:"0.85rem",fontWeight:700,color:lastUser.color}}>{lastUser.name} · {lastEntry.choreTitle}</div>
@@ -565,7 +565,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
         <div style={{background:DS.surface,borderRadius:14,padding:"14px 12px",border:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
           <div style={{fontSize:"0.65rem",color:DS.muted,fontWeight:600,alignSelf:"flex-start"}}>מוביל השבוע</div>
           <Ring value={getUserScore(sorted[0]?.id,log,bonus)} max={Math.max(getUserScore(sorted[0]?.id,log,bonus)+20,150)} color={sorted[0]?.color} size={70} sw={7}/>
-          <Avatar user={sorted[0]} photo={avatars?.[sorted[0]?.id]} size={26}/>
+          <Avatar user={sorted[0]} photo={avatars?.[sorted[0]?.id]} size={36}/>
         </div>
       </div>
 
@@ -580,7 +580,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
                 <span style={{fontSize:"0.68rem",color:DS.dim,width:12,fontVariantNumeric:"tabular-nums"}}>{i+1}</span>
-                <Avatar user={u} photo={avatars?.[u.id]} size={32}/>
+                <Avatar user={u} photo={avatars?.[u.id]} size={52}/>
                 <span style={{flex:1,fontSize:"0.88rem",fontWeight:600}}>{u.name}</span>
                 <span style={{fontSize:"0.92rem",fontWeight:800,color:u.color,fontVariantNumeric:"tabular-nums"}}>{sc}</span>
                 <span style={{fontSize:"0.65rem",color:DS.muted}}>נק'</span>
@@ -621,7 +621,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
           const u=USERS.find(u=>u.id===e.userId);
           return (
             <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:i<arr.length-1?`1px solid ${DS.border}`:"none",fontSize:"0.82rem"}}>
-              <Avatar user={u} photo={avatars?.[u?.id]} size={28}/>
+              <Avatar user={u} photo={avatars?.[u?.id]} size={38}/>
               <div style={{flex:1}}>
                 <span style={{fontWeight:700,color:u?.color}}>{u?.name}</span>
                 <span style={{color:DS.muted}}> · </span>
@@ -1126,12 +1126,17 @@ export default function App() {
         input:focus,button{outline:none;}
         ::-webkit-scrollbar{width:4px;}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px;}
+        /* iOS safe area — home indicator + notch */
+        nav { padding-bottom: 0 !important; }
+        #root > div > div:not(nav):not([style*="fixed"]) {
+          padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important;
+        }
       `}</style>
 
       <SyncDot saving={saving}/>
 
       {/* NAV */}
-      <nav style={{position:"sticky",top:0,zIndex:100,background:"rgba(0,0,0,.94)",backdropFilter:"blur(20px) saturate(180%)",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"0 16px",display:"flex",alignItems:"center",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+      <nav style={{position:"sticky",top:0,zIndex:100,background:"rgba(0,0,0,.94)",backdropFilter:"blur(20px) saturate(180%)",borderBottom:"1px solid rgba(255,255,255,.06)",paddingLeft:"max(16px, env(safe-area-inset-left))",paddingRight:"max(16px, env(safe-area-inset-right))",paddingTop:"env(safe-area-inset-top)",display:"flex",alignItems:"center",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
         <button onClick={()=>switchUser("dash")} style={{flexShrink:0,padding:"13px 4px 13px 0",background:"none",border:"none",borderBottom:`2px solid ${currentUser==="dash"?DS.accent:"transparent"}`,cursor:"pointer",display:"flex",alignItems:"center",gap:7,transition:"all .2s",marginLeft:16}}>
           <Logo size={20}/>
           <span style={{fontSize:"0.82rem",fontWeight:600,color:currentUser==="dash"?DS.accent:DS.muted}}>הבית</span>
