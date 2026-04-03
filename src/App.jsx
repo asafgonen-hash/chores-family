@@ -74,9 +74,9 @@ const USERS = [
 
 const CHORE_CATEGORIES = [
   { id:"hygiene", icon:"🦷", title:"היגיינה", chores:[
-    {id:"brush-morning", name:"צחצוח שיניים בוקר", pts:4, requiresPhoto:true},
-    {id:"brush-evening", name:"צחצוח שיניים ערב",  pts:4, requiresPhoto:true},
-    {id:"shower-done",   name:"מקלחת",              pts:3},
+    {id:"brush-morning", name:"צחצוח שיניים בוקר", pts:0, requiresPhoto:true, tracking:true},
+    {id:"brush-evening", name:"צחצוח שיניים ערב",  pts:0, requiresPhoto:true, tracking:true},
+    {id:"shower-done",   name:"מקלחת",              pts:0, tracking:true},
   ]},
   { id:"room",    icon:"🛏️", title:"סידור חדרים", chores:[
     {id:"make-bed",    name:"סידור מיטות",              pts:3},
@@ -243,6 +243,101 @@ function Logo({ size=32 }) {
       <circle cx="102" cy="78" r="1.1" fill="#FF453A" opacity="0.5"/>
       <circle cx="89" cy="94" r="0.9" fill="#30D158" opacity="0.4"/>
     </svg>
+  );
+}
+
+// ─── CROP MODAL ───────────────────────────────────────────────────────────────
+function CropModal({ src, user, onSave, onCancel }) {
+  const canvasRef  = useRef(null);
+  const imgRef     = useRef(null);
+  const [scale,    setScale]    = useState(1);
+  const [offset,   setOffset]   = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStart  = useRef(null);
+  const SIZE = 280;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const img    = imgRef.current;
+    if (!canvas || !img || !img.complete) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(SIZE/2, SIZE/2, SIZE/2, 0, Math.PI*2);
+    ctx.clip();
+    const w = img.naturalWidth  * scale;
+    const h = img.naturalHeight * scale;
+    const x = (SIZE - w) / 2 + offset.x;
+    const y = (SIZE - h) / 2 + offset.y;
+    ctx.drawImage(img, x, y, w, h);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(SIZE/2, SIZE/2, SIZE/2 - 1.5, 0, Math.PI*2);
+    ctx.strokeStyle = user.color;
+    ctx.lineWidth   = 3;
+    ctx.stroke();
+  }, [scale, offset, user.color]);
+
+  const onPointerDown = e => {
+    setDragging(true);
+    dragStart.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = e => {
+    if (!dragging) return;
+    setOffset({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y });
+  };
+  const onPointerUp = () => setDragging(false);
+
+  const handleSave = () => {
+    const out = document.createElement("canvas");
+    out.width = out.height = 300;
+    const ctx = out.getContext("2d");
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(150, 150, 150, 0, Math.PI*2);
+    ctx.clip();
+    const img = imgRef.current;
+    const ratio = 300 / SIZE;
+    const w = img.naturalWidth  * scale;
+    const h = img.naturalHeight * scale;
+    const x = (SIZE - w) / 2 + offset.x;
+    const y = (SIZE - h) / 2 + offset.y;
+    ctx.drawImage(img, x*ratio, y*ratio, w*ratio, h*ratio);
+    ctx.restore();
+    onSave(out.toDataURL("image/jpeg", 0.85));
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.93)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}}>
+      <div style={{background:"#111",borderRadius:24,padding:"24px 20px",maxWidth:340,width:"100%",border:`1px solid ${user.color}44`,textAlign:"center"}}>
+        <div style={{fontSize:"0.9rem",fontWeight:700,color:user.color,marginBottom:4}}>✂️ חתוך תמונה</div>
+        <div style={{fontSize:"0.72rem",color:"#555",marginBottom:16}}>גרור להזזה · גלגל לזום</div>
+        <img ref={imgRef} src={src} style={{display:"none"}} onLoad={()=>{
+          const img = imgRef.current;
+          const s = Math.max(SIZE/img.naturalWidth, SIZE/img.naturalHeight);
+          setScale(s); setOffset({x:0,y:0});
+        }}/>
+        <canvas ref={canvasRef} width={SIZE} height={SIZE}
+          style={{borderRadius:"50%",cursor:dragging?"grabbing":"grab",touchAction:"none",userSelect:"none",boxShadow:`0 0 0 4px ${user.color}33, 0 20px 40px rgba(0,0,0,.6)`}}
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+          onWheel={e=>{e.preventDefault();setScale(s=>Math.min(Math.max(s-e.deltaY*0.001,0.3),6));}}
+        />
+        <div style={{display:"flex",alignItems:"center",gap:10,margin:"14px 0 18px"}}>
+          <span style={{fontSize:"0.8rem"}}>🔍</span>
+          <input type="range" min="30" max="600" value={Math.round(scale*100)}
+            onChange={e=>setScale(parseInt(e.target.value)/100)}
+            style={{flex:1,accentColor:user.color}}/>
+          <span style={{fontSize:"0.72rem",color:"#555",minWidth:36}}>{Math.round(scale*100)}%</span>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={handleSave} style={{flex:1,background:user.color,border:"none",borderRadius:12,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.9rem",padding:"11px",cursor:"pointer"}}>✓ שמור</button>
+          <button onClick={onCancel} style={{background:"rgba(255,255,255,.06)",border:"none",borderRadius:12,color:"#666",fontFamily:"-apple-system,sans-serif",fontSize:"0.9rem",padding:"11px 16px",cursor:"pointer"}}>ביטול</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -603,20 +698,23 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
     onLogChore(user.id,activeChore.choreId,activeChore.catId,duration,photoUrl||null);
     setActiveChore(null);setSelectedTime(null);setCustomTime("");
   };
+  const [cropSrc,   setCropSrc]   = useState(null);
+
   const handleAvatarFile = file => {
     if(!file||!file.type.startsWith("image/")) return;
-    const reader=new FileReader();
-    reader.onload=e=>onPhotoChange(e.target.result);
+    const reader = new FileReader();
+    reader.onload = e => setCropSrc(e.target.result);
     reader.readAsDataURL(file);
   };
 
   return (
     <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
       <input ref={inputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleAvatarFile(e.target.files?.[0])}/>
+      {cropSrc && <CropModal src={cropSrc} user={user} onSave={url=>{onPhotoChange(url);setCropSrc(null);}} onCancel={()=>setCropSrc(null)}/>}
 
       {/* Header */}
       <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:18}}>
-        <Avatar user={user} photo={photo} size={56} editable onClick={()=>inputRef.current?.click()}/>
+        <Avatar user={user} photo={photo} size={80} editable onClick={()=>inputRef.current?.click()}/>
         <div style={{flex:1}}>
           <div style={{fontSize:"1.3rem",fontWeight:700,letterSpacing:-0.3}}>{user.name}</div>
           <div style={{fontSize:"0.7rem",color:DS.muted,marginTop:1}}>{career.title}</div>
@@ -697,7 +795,7 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
                         <span style={{flex:1,fontSize:"0.82rem"}}>{chore.name}</span>
                         {chore.requiresPhoto&&<span style={{fontSize:"0.65rem",color:DS.dim}}>📷</span>}
                         {lastLog?.duration&&<span style={{fontSize:"0.65rem",color:DS.dim}}>⏱{lastLog.duration}ד'</span>}
-                        <span style={{fontSize:"0.68rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{chore.pts}</span>
+                        {chore.tracking ? <span style={{fontSize:"0.68rem",fontWeight:600,color:DS.muted,background:"rgba(255,255,255,.06)",borderRadius:6,padding:"1px 7px"}}>מעקב</span> : <span style={{fontSize:"0.68rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{chore.pts}</span>}
                       </div>
                       {isActive&&(
                         chore.requiresPhoto
@@ -931,7 +1029,7 @@ export default function App() {
         setRewards(data.rewards||[]); setAvatars(data.avatars||{});
         stateRef.current = data;
       }
-    }).catch(console.error).finally(()=>setLoading(false));
+    }).catch(console.error).finally(()=>{ setLoading(false); window.__hideSplash?.(); });
   },[]);
 
   useEffect(()=>{ const id=startBrushingWatchdog(()=>stateRef.current.log||[]); return()=>clearInterval(id); },[]);
@@ -972,7 +1070,7 @@ export default function App() {
     const chore=CHORE_CATEGORIES.flatMap(c=>c.chores).find(c=>c.id===choreId); if(!chore) return;
     const entry={userId:uid,choreId,catId,choreTitle:chore.name,pts:chore.pts,duration:duration||null,photoUrl:photoUrl||null,ts:Date.now()};
     setLog(prev=>{const next=[...prev,entry];persist(next,stateRef.current.bonus);return next;});
-    showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name} · +${chore.pts} נקודות!`);
+    showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name}${chore.tracking?"":" · +"+chore.pts+" נקודות"}!`);
     pop();
     if(entry.photoUrl){const kidName=USERS.find(u=>u.id===uid)?.name||uid;sendEmail(`✅ ${kidName} צחצח שיניים!`,`${kidName} שלח תמונת הוכחה! (+${chore.pts} נקודות)\n${entry.photoUrl}`);}
   };
