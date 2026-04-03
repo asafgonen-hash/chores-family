@@ -2,10 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { loadData, saveData, subscribeToRealtime, uploadProofPhoto } from "./supabase.js";
 
 // ─── EMAIL CONFIG ─────────────────────────────────────────────────────────────
-const EMAILJS_SERVICE_ID  = "PASTE_SERVICE_ID";
-const EMAILJS_TEMPLATE_ID = "PASTE_TEMPLATE_ID";
-const EMAILJS_PUBLIC_KEY  = "PASTE_PUBLIC_KEY";
-const ALERT_EMAILS        = ["PASTE_YOUR_EMAIL", "PASTE_ANNA_EMAIL"];
+const EMAILJS_SERVICE_ID  = "service_upz56qe";
+const EMAILJS_TEMPLATE_ID = "template_2xculej";
+const EMAILJS_PUBLIC_KEY  = "3ErC_sLT1L_Z-i_Sd";
+const ALERT_EMAILS        = ["asafgonen@gmail.com,GonenAnna@gmail.com"];
 
 async function sendEmail(params) {
   if (EMAILJS_SERVICE_ID === "PASTE_SERVICE_ID") return;
