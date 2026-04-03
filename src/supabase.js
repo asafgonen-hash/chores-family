@@ -103,37 +103,12 @@ export function subscribeToRealtime(callback) {
 // ── Storage: upload proof photo ───────────────────────────────────────────────
 // Compresses image to ~80KB before uploading to Supabase Storage bucket
 export async function uploadProofPhoto(file, uid, choreId) {
-  // 1. Compress via canvas
-  const compressed = await compressImage(file, 800, 0.7);
-
-  // 2. Build a unique path: uid/choreId/timestamp.jpg
-  const path = `${uid}/${choreId}/${Date.now()}.jpg`;
-
-  // 3. Upload to Supabase Storage bucket "proof-photos"
-  const res = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/proof-photos/${path}`,
-    {
-      method: "POST",
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Content-Type": "image/jpeg",
-        "x-upsert": "true",
-      },
-      body: compressed,
-    }
-  );
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Upload failed: ${res.status} ${txt}`);
-  }
-
-  // 4. Return the public URL
-  return `${SUPABASE_URL}/storage/v1/object/public/proof-photos/${path}`;
+  // Compress + convert to base64 data URL — no Storage bucket needed
+  return await compressToBase64(file, 600, 0.75);
 }
 
-// Compress image using canvas — returns a Blob
-function compressImage(file, maxWidth, quality) {
+// Compress image to base64 JPEG — ~40-80KB result
+function compressToBase64(file, maxWidth, quality) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -144,9 +119,9 @@ function compressImage(file, maxWidth, quality) {
       canvas.width  = Math.round(img.width  * scale);
       canvas.height = Math.round(img.height * scale);
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Canvas toBlob failed")), "image/jpeg", quality);
+      resolve(canvas.toDataURL("image/jpeg", quality));
     };
-    img.onerror = reject;
+    img.onerror = () => reject(new Error("Image load failed"));
     img.src = url;
   });
 }
