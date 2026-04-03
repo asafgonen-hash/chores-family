@@ -84,7 +84,6 @@ const CHORE_CATEGORIES = [
   { id:"hygiene", icon:"🦷", title:"היגיינה", chores:[
     {id:"brush-morning", name:"צחצוח שיניים בוקר", pts:0, requiresPhoto:true, tracking:true},
     {id:"brush-evening", name:"צחצוח שיניים ערב",  pts:0, requiresPhoto:true, tracking:true},
-    {id:"shower-done",   name:"מקלחת",              pts:0, tracking:true},
   ]},
   { id:"room",    icon:"🛏️", title:"סידור חדרים", chores:[
     {id:"make-bed",    name:"סידור מיטות",              pts:3},
