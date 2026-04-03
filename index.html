@@ -2,14 +2,87 @@
 <html lang="he" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>משימות הבית</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Heebo:wght@300;400;600;700;800&display=swap" rel="stylesheet" />
-    <style>* { box-sizing: border-box; margin: 0; padding: 0; } body { background: #0f0f1a; }</style>
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="משימות" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <!-- Fonts: preconnect first, then async load -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Load fonts async so they never block render -->
+    <link rel="preload" as="style"
+      href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800&display=swap"
+      onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript>
+      <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800&display=swap" />
+    </noscript>
+
+    <style>
+      /* Instant paint — no waiting for anything */
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { background: #000; color: #fff; height: 100%; }
+      #root { min-height: 100vh; }
+
+      /* Skeleton screen shown until React mounts */
+      #splash {
+        position: fixed; inset: 0;
+        background: #000;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 16px; z-index: 9999;
+        transition: opacity .3s;
+      }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      #splash svg { animation: splashSpin 1.2s linear infinite; }
+      @keyframes splashSpin { to { transform: rotate(360deg); } }
+      #splash p {
+        font-family: -apple-system, sans-serif;
+        font-size: 0.85rem; color: #444; letter-spacing: 0.5px;
+      }
+
+      /* System font stack as instant fallback */
+      body { font-family: -apple-system, 'Heebo', sans-serif; }
+    </style>
   </head>
   <body>
+    <!-- Instant splash — visible before any JS loads -->
+    <div id="splash">
+      <svg width="56" height="56" viewBox="0 0 120 120" fill="none">
+        <defs>
+          <linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#00D4AA"/>
+            <stop offset="100%" stop-color="#0A84FF"/>
+          </linearGradient>
+        </defs>
+        <circle cx="60" cy="60" r="50" stroke="rgba(255,255,255,0.06)" stroke-width="8" fill="none"/>
+        <circle cx="60" cy="60" r="50" stroke="url(#sg)" stroke-width="8" fill="none"
+          stroke-linecap="round" stroke-dasharray="180 314" stroke-dashoffset="-20"
+          transform="rotate(-90 60 60)"/>
+        <path d="M60 32 L80 52 L40 52 Z" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+        <rect x="42" y="52" width="36" height="28" rx="2" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <rect x="55" y="64" width="10" height="16" rx="2" fill="rgba(0,212,170,0.6)"/>
+      </svg>
+      <p>טוען...</p>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+
+    <!-- Hide splash once React takes over -->
+    <script>
+      window.__hideSplash = function() {
+        var s = document.getElementById('splash');
+        if (s) { s.classList.add('hide'); setTimeout(function(){ s.remove(); }, 400); }
+      };
+    </script>
   </body>
 </html>
