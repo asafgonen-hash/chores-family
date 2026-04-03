@@ -7,16 +7,20 @@ const EMAILJS_TEMPLATE_ID = "PASTE_TEMPLATE_ID";
 const EMAILJS_PUBLIC_KEY  = "PASTE_PUBLIC_KEY";
 const ALERT_EMAILS        = ["PASTE_YOUR_EMAIL", "PASTE_ANNA_EMAIL"];
 
-async function sendEmail(subject, body) {
+async function sendEmail(params) {
   if (EMAILJS_SERVICE_ID === "PASTE_SERVICE_ID") return;
   try {
     await fetch("https://api.emailjs.com/api/v1.0/email/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        service_id: EMAILJS_SERVICE_ID, template_id: EMAILJS_TEMPLATE_ID,
-        user_id: EMAILJS_PUBLIC_KEY,
-        template_params: { to_email: ALERT_EMAILS.join(","), subject, message: body },
+        service_id:  EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id:     EMAILJS_PUBLIC_KEY,
+        template_params: {
+          to_email:   "asafgonen@gmail.com,GonenAnna@gmail.com",
+          ...params,
+        },
       }),
     });
   } catch(e) { console.warn("Email error:", e); }
@@ -47,8 +51,12 @@ function startBrushingWatchdog(getLog) {
       if (now >= lastBrushTs + gapMs && !alerted[alertKey]) {
         alerted[alertKey] = true;
         const h = Math.floor((now-lastBrushTs)/3600000);
-        sendEmail(`🦷 ${KID_NAMES[uid]} לא צחצח שיניים!`,
-          `${KID_NAMES[uid]} לא צחצח שיניים — לפני ${h} שעות.\nהיכנסו לאפליקציה לבדוק. 🪥`);
+        const session = lastEntry?.choreId === "brush-morning" ? "בוקר" : "ערב";
+        sendEmail({
+          child_name: KID_NAMES[uid],
+          session,
+          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים ב${session}`,
+        });
       }
     });
   };
@@ -1072,7 +1080,7 @@ export default function App() {
     setLog(prev=>{const next=[...prev,entry];persist(next,stateRef.current.bonus);return next;});
     showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name}${chore.tracking?"":" · +"+chore.pts+" נקודות"}!`);
     pop();
-    if(entry.photoUrl){const kidName=USERS.find(u=>u.id===uid)?.name||uid;sendEmail(`✅ ${kidName} צחצח שיניים!`,`${kidName} שלח תמונת הוכחה! (+${chore.pts} נקודות)\n${entry.photoUrl}`);}
+    if(entry.photoUrl){const kidName=USERS.find(u=>u.id===uid)?.name||uid;sendEmail({child_name:kidName,session:"✅ צחצח ושלח הוכחה!",subject:`✅ ${kidName} צחצח שיניים!`});}
   };
   const handleAdjustBonus=(uid,amount)=>{
     setBonus(prev=>{const next={...prev,[uid]:(prev[uid]||0)+amount};persist(stateRef.current.log,next);return next;});
