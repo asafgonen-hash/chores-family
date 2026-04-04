@@ -5,7 +5,6 @@ import { loadData, saveData, subscribeToRealtime, uploadProofPhoto } from "./sup
 const EMAILJS_SERVICE_ID  = "service_upz56qe";
 const EMAILJS_TEMPLATE_ID = "template_2xculej";
 const EMAILJS_PUBLIC_KEY  = "3ErC_sLT1L_Z-i_Sd";
-const ALERT_EMAILS        = ["asafgonen@gmail.com,GonenAnna@gmail.com"];
 
 async function sendEmail(params) {
   if (EMAILJS_SERVICE_ID === "PASTE_SERVICE_ID") return;
@@ -18,7 +17,7 @@ async function sendEmail(params) {
         template_id: EMAILJS_TEMPLATE_ID,
         user_id:     EMAILJS_PUBLIC_KEY,
         template_params: {
-          to_email:   "asafgonen@gmail.com,GonenAnna@gmail.com",
+          to_email: "asafgonen@gmail.com,GonenAnna@gmail.com",
           ...params,
         },
       }),
@@ -31,46 +30,27 @@ const MORNING_GAP_HOURS = 15;
 const EVENING_GAP_HOURS = 10;
 function startBrushingWatchdog(getLog) {
   const MORNING_ID = "brush-morning", EVENING_ID = "brush-evening";
-  const BRUSH_IDS = [MORNING_ID, EVENING_ID];
   const KIDS = ["ido","yotam","itai"];
   const KID_NAMES = { ido:"עידו", yotam:"יותם", itai:"איתי" };
   const alerted = {};
   const check = () => {
     const now = Date.now(), log = getLog();
     KIDS.forEach(uid => {
-      // Check morning brush: did kid brush this morning (since midnight)?
       const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
       const todayStart = todayMidnight.getTime();
       const morningDeadline = todayStart + MORNING_GAP_HOURS * 3600000;
       const eveningDeadline = todayStart + 24 * 3600000 - (24 - MORNING_GAP_HOURS - EVENING_GAP_HOURS) * 3600000;
-
-      const brushedMorningToday = log.some(e =>
-        e.userId === uid && e.choreId === MORNING_ID && e.ts >= todayStart
-      );
-      const brushedEveningToday = log.some(e =>
-        e.userId === uid && e.choreId === EVENING_ID && e.ts >= todayStart
-      );
-
-      // Morning alert: after MORNING_GAP_HOURS since midnight, if still no morning brush
+      const brushedMorning = log.some(e => e.userId===uid && e.choreId===MORNING_ID && e.ts>=todayStart);
+      const brushedEvening = log.some(e => e.userId===uid && e.choreId===EVENING_ID && e.ts>=todayStart);
       const morningKey = `${uid}-morning-${Math.floor(todayStart/86400000)}`;
-      if (now >= morningDeadline && !brushedMorningToday && !alerted[morningKey]) {
-        alerted[morningKey] = true;
-        sendEmail({
-          child_name: KID_NAMES[uid],
-          session: "בוקר",
-          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים בוקר`,
-        });
+      if (now>=morningDeadline && !brushedMorning && !alerted[morningKey]) {
+        alerted[morningKey]=true;
+        sendEmail({ child_name:KID_NAMES[uid], session:"בוקר", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים בוקר` });
       }
-
-      // Evening alert: after MORNING_GAP_HOURS + EVENING_GAP_HOURS since midnight, if no evening brush
       const eveningKey = `${uid}-evening-${Math.floor(todayStart/86400000)}`;
-      if (now >= eveningDeadline && !brushedEveningToday && !alerted[eveningKey]) {
-        alerted[eveningKey] = true;
-        sendEmail({
-          child_name: KID_NAMES[uid],
-          session: "ערב",
-          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים ערב`,
-        });
+      if (now>=eveningDeadline && !brushedEvening && !alerted[eveningKey]) {
+        alerted[eveningKey]=true;
+        sendEmail({ child_name:KID_NAMES[uid], session:"ערב", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים ערב` });
       }
     });
   };
@@ -83,6 +63,9 @@ const DS = {
   bg: "#000000", surface: "#111111", surface2: "#1a1a1a",
   border: "rgba(255,255,255,0.07)", text: "#ffffff",
   muted: "#666666", dim: "#333333", accent: "#00D4AA",
+  // Brushing section specific
+  brushBg: "#0a0f0e",
+  brushBorder: "rgba(0,212,170,0.15)",
 };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -94,11 +77,13 @@ const USERS = [
   { id:"anna",  name:"אנה",   color:"#FF375F", role:"parent", pin:"5678" },
 ];
 
+// Brushing chores are SEPARATE from categories now
+const BRUSH_CHORES = [
+  { id:"brush-morning", name:"צחצוח בוקר", icon:"🌅", pts:0, requiresPhoto:true, tracking:true },
+  { id:"brush-evening", name:"צחצוח ערב",  icon:"🌙", pts:0, requiresPhoto:true, tracking:true },
+];
+
 const CHORE_CATEGORIES = [
-  { id:"hygiene", icon:"🦷", title:"היגיינה", chores:[
-    {id:"brush-morning", name:"צחצוח שיניים בוקר", pts:0, requiresPhoto:true, tracking:true},
-    {id:"brush-evening", name:"צחצוח שיניים ערב",  pts:0, requiresPhoto:true, tracking:true},
-  ]},
   { id:"room",    icon:"🛏️", title:"סידור חדרים", chores:[
     {id:"make-bed",    name:"סידור מיטות",              pts:3},
     {id:"pillows",     name:"יישור שמיכות וכריות",       pts:2},
@@ -191,6 +176,12 @@ const CHORE_CATEGORIES = [
   ]},
 ];
 
+// All chores flat list (includes brush chores for scoring/lookup)
+const ALL_CHORES_FLAT = [
+  ...BRUSH_CHORES,
+  ...CHORE_CATEGORIES.flatMap(c => c.chores),
+];
+
 const CAREERS = [
   { title:"עוזר ניקיון",    pts:0   },
   { title:"כוכב עוזר",      pts:30  },
@@ -258,11 +249,6 @@ function Logo({ size=32 }) {
       <rect x="54" y="58" width="12" height="14" rx="3" fill="url(#logoRingA)" opacity="0.7"/>
       <rect x="47" y="50" width="8" height="7" rx="1.5" fill="rgba(0,212,170,0.25)" stroke="rgba(0,212,170,0.4)" strokeWidth="0.8"/>
       <rect x="65" y="50" width="8" height="7" rx="1.5" fill="rgba(10,132,255,0.25)" stroke="rgba(10,132,255,0.4)" strokeWidth="0.8"/>
-      <circle cx="24" cy="28" r="1.2" fill="#00D4AA" opacity="0.6"/>
-      <circle cx="96" cy="32" r="0.9" fill="#0A84FF" opacity="0.5"/>
-      <circle cx="18" cy="72" r="0.8" fill="#BF5AF2" opacity="0.4"/>
-      <circle cx="102" cy="78" r="1.1" fill="#FF453A" opacity="0.5"/>
-      <circle cx="89" cy="94" r="0.9" fill="#30D158" opacity="0.4"/>
     </svg>
   );
 }
@@ -544,17 +530,12 @@ function PhotoUpload({ user, chore, onDone, onSkip }) {
 function BrushPhotosModal({ user, log, avatars, onClose }) {
   const BRUSH_IDS = ["brush-morning", "brush-evening"];
   const BRUSH_NAMES = { "brush-morning": "בוקר 🌅", "brush-evening": "ערב 🌙" };
-
   const photos = [...log]
-    .filter(e => e.userId === user.id && BRUSH_IDS.includes(e.choreId) && e.photoUrl)
-    .reverse()
-    .slice(0, 12);
-
+    .filter(e => e.userId===user.id && BRUSH_IDS.includes(e.choreId) && e.photoUrl)
+    .reverse().slice(0,12);
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 0 0"}}
-      onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{background:"#111",borderRadius:"24px 24px 0 0",padding:"20px 16px 40px",width:"100%",maxWidth:500,maxHeight:"85vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-        {/* Header */}
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18,flexShrink:0}}>
           <Avatar user={user} photo={avatars?.[user.id]} size={44}/>
           <div>
@@ -563,10 +544,8 @@ function BrushPhotosModal({ user, log, avatars, onClose }) {
           </div>
           <button onClick={onClose} style={{marginRight:"auto",background:"rgba(255,255,255,.07)",border:"none",borderRadius:"50%",width:32,height:32,color:"#666",cursor:"pointer",fontSize:"1rem"}}>✕</button>
         </div>
-
-        {/* Photos grid */}
         <div style={{overflowY:"auto",flex:1}}>
-          {photos.length === 0 ? (
+          {photos.length===0 ? (
             <div style={{textAlign:"center",color:"#444",padding:"40px 20px"}}>
               <div style={{fontSize:"3rem",marginBottom:12}}>📷</div>
               <div style={{fontSize:"0.85rem"}}>עדיין אין תמונות צחצוח</div>
@@ -576,7 +555,6 @@ function BrushPhotosModal({ user, log, avatars, onClose }) {
               {photos.map((e,i)=>(
                 <div key={i} style={{position:"relative",borderRadius:12,overflow:"hidden",aspectRatio:"1",background:"#1a1a1a"}}>
                   <img src={e.photoUrl} alt="צחצוח" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                  {/* Label overlay */}
                   <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(transparent,rgba(0,0,0,.8))",padding:"8px 6px 5px",fontSize:"0.6rem",color:"#ccc",fontWeight:600}}>
                     {BRUSH_NAMES[e.choreId]}<br/>
                     <span style={{color:"#666",fontWeight:400}}>{new Date(e.ts).toLocaleDateString("he-IL",{day:"numeric",month:"short"})}</span>
@@ -587,6 +565,194 @@ function BrushPhotosModal({ user, log, avatars, onClose }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── BRUSHING SECTION (new standalone component) ──────────────────────────────
+function BrushingSection({ user, log, onLogChore }) {
+  const [activeChore, setActiveChore] = useState(null);
+  const today = new Date().toDateString();
+
+  const getStreak = (choreId) => {
+    let streak = 0;
+    const d = new Date();
+    while (true) {
+      const dateStr = d.toDateString();
+      const done = log.some(e => e.userId===user.id && e.choreId===choreId && new Date(e.ts).toDateString()===dateStr);
+      if (!done) break;
+      streak++;
+      d.setDate(d.getDate()-1);
+    }
+    return streak;
+  };
+
+  const handleDone = (url) => {
+    if (!activeChore) return;
+    onLogChore(user.id, activeChore.id, "hygiene", null, url || null);
+    setActiveChore(null);
+  };
+
+  return (
+    <div style={{
+      background: "linear-gradient(135deg, #071211 0%, #0a1a16 50%, #071211 100%)",
+      borderRadius: 20,
+      border: "1px solid rgba(0,212,170,0.2)",
+      marginBottom: 20,
+      overflow: "hidden",
+      boxShadow: "0 0 40px rgba(0,212,170,0.05)",
+    }}>
+      {/* Header strip */}
+      <div style={{
+        background: "linear-gradient(90deg, rgba(0,212,170,0.12) 0%, rgba(0,212,170,0.04) 100%)",
+        borderBottom: "1px solid rgba(0,212,170,0.12)",
+        padding: "11px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}>
+        <span style={{fontSize:"1.1rem"}}>🦷</span>
+        <span style={{fontSize:"0.72rem",fontWeight:700,color:"#00D4AA",letterSpacing:1.5,textTransform:"uppercase"}}>מעקב צחצוח יומי</span>
+        <div style={{marginRight:"auto",fontSize:"0.65rem",color:"rgba(0,212,170,0.5)",background:"rgba(0,212,170,0.08)",borderRadius:20,padding:"2px 10px",border:"1px solid rgba(0,212,170,0.12)"}}>
+          {new Date().toLocaleDateString("he-IL",{weekday:"long",day:"numeric",month:"long"})}
+        </div>
+      </div>
+
+      {/* Cards */}
+      <div style={{padding:"14px 14px 4px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        {BRUSH_CHORES.map(chore => {
+          const doneCount = countToday(user.id, chore.id, log);
+          const done = doneCount > 0;
+          const streak = getStreak(chore.id);
+          const isActive = activeChore?.id === chore.id;
+          const lastPhoto = [...log].reverse().find(e => e.userId===user.id && e.choreId===chore.id && e.photoUrl && new Date(e.ts).toDateString()===today);
+
+          return (
+            <div key={chore.id}>
+              <div
+                onClick={() => {
+                  if (isActive) { setActiveChore(null); return; }
+                  setActiveChore(chore);
+                }}
+                style={{
+                  background: done
+                    ? "linear-gradient(135deg, rgba(0,212,170,0.15), rgba(0,212,170,0.06))"
+                    : "rgba(255,255,255,0.03)",
+                  border: `1.5px solid ${done ? "rgba(0,212,170,0.4)" : "rgba(255,255,255,0.07)"}`,
+                  borderRadius: 16,
+                  padding: "14px 12px",
+                  cursor: "pointer",
+                  transition: "all .2s",
+                  position: "relative",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Done glow */}
+                {done && (
+                  <div style={{position:"absolute",top:-20,right:-20,width:60,height:60,borderRadius:"50%",background:"rgba(0,212,170,0.12)",filter:"blur(20px)",pointerEvents:"none"}}/>
+                )}
+
+                {/* Icon + status */}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <span style={{fontSize:"1.6rem"}}>{chore.icon}</span>
+                  <div style={{
+                    width:28,height:28,borderRadius:"50%",
+                    background: done ? "rgba(0,212,170,0.2)" : "rgba(255,255,255,0.05)",
+                    border: `2px solid ${done ? "#00D4AA" : "rgba(255,255,255,0.1)"}`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:"0.85rem",flexShrink:0,
+                    transition:"all .3s",
+                  }}>
+                    {done ? "✓" : ""}
+                  </div>
+                </div>
+
+                {/* Name */}
+                <div style={{fontSize:"0.82rem",fontWeight:700,color: done ? "#00D4AA" : DS.text,marginBottom:4}}>
+                  {chore.name}
+                </div>
+
+                {/* Streak + photo thumb */}
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {streak > 0 && (
+                    <div style={{fontSize:"0.65rem",color:"#FF9F0A",fontWeight:700,background:"rgba(255,159,10,0.1)",borderRadius:8,padding:"2px 7px",border:"1px solid rgba(255,159,10,0.2)"}}>
+                      🔥 {streak}
+                    </div>
+                  )}
+                  {lastPhoto && (
+                    <img src={lastPhoto.photoUrl} alt="proof"
+                      style={{width:22,height:22,borderRadius:6,objectFit:"cover",border:"1px solid rgba(0,212,170,0.3)",marginRight:"auto"}}/>
+                  )}
+                  {!done && (
+                    <div style={{fontSize:"0.6rem",color:DS.muted,marginRight:"auto"}}>טרם בוצע</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Inline photo upload — appears below the card */}
+              {isActive && (
+                <div style={{marginTop:6,marginBottom:6}}>
+                  <PhotoUpload
+                    user={user}
+                    chore={chore}
+                    onDone={handleDone}
+                    onSkip={() => handleDone(null)}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Week strip */}
+      <div style={{padding:"10px 14px 14px"}}>
+        <div style={{background:"rgba(0,0,0,0.3)",borderRadius:12,padding:"10px 12px",border:"1px solid rgba(0,212,170,0.08)"}}>
+          <div style={{fontSize:"0.6rem",color:"rgba(0,212,170,0.5)",fontWeight:600,letterSpacing:1,marginBottom:8}}>7 ימים אחרונים</div>
+          <div style={{display:"flex",gap:4}}>
+            {Array.from({length:7}).map((_,i) => {
+              const d = new Date();
+              d.setDate(d.getDate() - (6-i));
+              const dStr = d.toDateString();
+              const morning = log.some(e => e.userId===user.id && e.choreId==="brush-morning" && new Date(e.ts).toDateString()===dStr);
+              const evening = log.some(e => e.userId===user.id && e.choreId==="brush-evening" && new Date(e.ts).toDateString()===dStr);
+              const both = morning && evening;
+              const isToday = dStr === today;
+              return (
+                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  <div style={{
+                    width:"100%",height:28,borderRadius:6,
+                    background: both ? "rgba(0,212,170,0.35)" : (morning||evening) ? "rgba(0,212,170,0.15)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${both ? "rgba(0,212,170,0.5)" : isToday ? "rgba(0,212,170,0.25)" : "rgba(255,255,255,0.06)"}`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize:"0.6rem",
+                    transition:"all .3s",
+                  }}>
+                    {both ? "✓✓" : morning ? "☀️" : evening ? "🌙" : ""}
+                  </div>
+                  <div style={{fontSize:"0.55rem",color: isToday ? "#00D4AA" : DS.dim,fontWeight: isToday ? 700 : 400}}>
+                    {d.toLocaleDateString("he-IL",{weekday:"short"}).slice(0,2)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SECTION DIVIDER ─────────────────────────────────────────────────────────
+function SectionDivider({ icon, label }) {
+  return (
+    <div style={{display:"flex",alignItems:"center",gap:10,margin:"22px 0 12px"}}>
+      <div style={{height:1,flex:1,background:"linear-gradient(90deg, transparent, rgba(255,255,255,0.08))"}}/>
+      <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:20,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)"}}>
+        <span style={{fontSize:"0.85rem"}}>{icon}</span>
+        <span style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,textTransform:"uppercase"}}>{label}</span>
+      </div>
+      <div style={{height:1,flex:1,background:"linear-gradient(90deg, rgba(255,255,255,0.08), transparent)"}}/>
     </div>
   );
 }
@@ -736,7 +902,7 @@ function KidRewards({ user, rewards, log, bonus, onRedeemReward }) {
               <div style={{fontSize:"1.8rem",textAlign:"center"}}>{r.emoji||"🎁"}</div>
               <div style={{fontSize:"0.78rem",fontWeight:700,textAlign:"center"}}>{r.title}</div>
               <div style={{fontSize:"0.82rem",fontWeight:800,textAlign:"center",color:canRedeem?user.color:DS.muted,fontVariantNumeric:"tabular-nums"}}>{r.pts} נק'</div>
-              {!canRedeem&&<div style={{height:3,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:2}}/></div>}
+              {!canRedeem&&<div style={{height:3,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:2}/></div>}
               {!canRedeem&&<div style={{fontSize:"0.65rem",color:DS.dim,textAlign:"center"}}>עוד {r.pts-score}</div>}
               {canRedeem&&<button onClick={()=>onRedeemReward(r.id,user.id)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.8rem",padding:"6px",cursor:"pointer"}}>מימוש!</button>}
               {redeemed>0&&<div style={{fontSize:"0.65rem",color:DS.accent,textAlign:"center"}}>✓ {redeemed}×</div>}
@@ -750,7 +916,7 @@ function KidRewards({ user, rewards, log, bonus, onRedeemReward }) {
 
 // ─── KID PAGE ─────────────────────────────────────────────────────────────────
 function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo, onPhotoChange }) {
-  const [openCats, setOpenCats] = useState({hygiene:true});
+  const [openCats, setOpenCats] = useState({});
   const [activeChore, setActiveChore] = useState(null);
   const [selectedTime, setSelectedTime] = useState(null);
   const [customTime, setCustomTime] = useState("");
@@ -767,18 +933,16 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
 
   const toggleCat = id => setOpenCats(p=>({...p,[id]:!p[id]}));
   const openTimeLog = (chore,catId) => {
-    // Always open fresh — allow re-doing (multiple times per day)
     setActiveChore({choreId:chore.id,catId});
-    setSelectedTime(null);setCustomTime("");
+    setSelectedTime(null); setCustomTime("");
     setOpenCats(p=>({...p,[catId]:true}));
   };
   const confirm = (duration,photoUrl) => {
     if(!activeChore) return;
     onLogChore(user.id,activeChore.choreId,activeChore.catId,duration,photoUrl||null);
-    setActiveChore(null);setSelectedTime(null);setCustomTime("");
+    setActiveChore(null); setSelectedTime(null); setCustomTime("");
   };
-  const [cropSrc,   setCropSrc]   = useState(null);
-
+  const [cropSrc, setCropSrc] = useState(null);
   const handleAvatarFile = file => {
     if(!file||!file.type.startsWith("image/")) return;
     const reader = new FileReader();
@@ -837,10 +1001,17 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
       {/* Rewards */}
       <KidRewards user={user} rewards={rewards||[]} log={log} bonus={bonus} onRedeemReward={onRedeemReward}/>
 
-      {/* TODAY label */}
-      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>TODAY</div>
+      {/* ══════════════════════════════════════════════════
+          BRUSHING SECTION — visually separated, teal-tinted
+         ══════════════════════════════════════════════════ */}
+      <BrushingSection user={user} log={log} onLogChore={onLogChore} />
 
-      {/* Chore categories */}
+      {/* ══════════════════════════════════════════════════
+          CHORES SECTION — standard house tasks below
+         ══════════════════════════════════════════════════ */}
+      <SectionDivider icon="🏠" label="משימות הבית" />
+
+      {/* Chore categories — hygiene category is now excluded (brush moved above) */}
       {CHORE_CATEGORIES.map(cat=>{
         const doneInCat=cat.chores.filter(c=>countToday(user.id,c.id,log)>0).length;
         const isOpen=openCats[cat.id];
@@ -872,26 +1043,23 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
                         onMouseLeave={e=>e.currentTarget.style.background=isActive?"rgba(255,255,255,.04)":"transparent"}>
                         <div style={{width:22,height:22,borderRadius:7,border:`1.5px solid ${timesToday>0?user.color:"rgba(255,255,255,.12)"}`,background:timesToday>0?user.color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"0.62rem",fontWeight:800,color:"#000"}}>{timesToday>0?timesToday:""}</div>
                         <span style={{flex:1,fontSize:"0.82rem"}}>{chore.name}</span>
-                        {chore.requiresPhoto&&<span style={{fontSize:"0.65rem",color:DS.dim}}>📷</span>}
                         {lastLog?.duration&&<span style={{fontSize:"0.65rem",color:DS.dim}}>⏱{lastLog.duration}ד'</span>}
-                        {chore.tracking ? <span style={{fontSize:"0.68rem",fontWeight:600,color:DS.muted,background:"rgba(255,255,255,.06)",borderRadius:6,padding:"1px 7px"}}>מעקב</span> : <span style={{fontSize:"0.68rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{chore.pts}</span>}
+                        <span style={{fontSize:"0.68rem",fontWeight:700,color:user.color,fontVariantNumeric:"tabular-nums"}}>+{chore.pts}</span>
                       </div>
                       {isActive&&(
-                        chore.requiresPhoto
-                          ? <PhotoUpload user={user} chore={chore} onDone={url=>confirm(null,url)} onSkip={()=>confirm(null,null)}/>
-                          : <div style={{background:DS.surface2,padding:"12px 14px",borderBottom:ci<cat.chores.length-1?`1px solid ${DS.border}`:"none"}}>
-                              <div style={{fontSize:"0.78rem",color:DS.muted,marginBottom:8}}>⏱ כמה זמן לקח לך?</div>
-                              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-                                {[2,5,10,15,20,30].map(m=>(
-                                  <button key={m} onClick={()=>setSelectedTime(m)} style={{padding:"5px 11px",borderRadius:18,background:selectedTime===m?user.color:"rgba(255,255,255,.05)",border:`1px solid ${selectedTime===m?user.color:"rgba(255,255,255,.08)"}`,color:selectedTime===m?"#000":DS.text,fontFamily:"-apple-system,sans-serif",fontSize:"0.78rem",cursor:"pointer"}}>{m} דק'</button>
-                                ))}
-                              </div>
-                              <div style={{display:"flex",gap:6,marginBottom:8}}>
-                                <input type="number" placeholder="זמן אחר" value={customTime} onChange={e=>setCustomTime(e.target.value)} style={{flex:1,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:DS.text,padding:"6px 10px",fontFamily:"-apple-system,sans-serif",fontSize:"0.82rem"}}/>
-                                <button onClick={()=>confirm(customTime?parseInt(customTime):selectedTime)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.82rem",padding:"7px 14px",cursor:"pointer"}}>✓</button>
-                              </div>
-                              <button onClick={()=>confirm(null)} style={{background:"none",border:"1px solid rgba(255,255,255,.07)",borderRadius:18,color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem",padding:"4px 12px",cursor:"pointer"}}>דלג</button>
-                            </div>
+                        <div style={{background:DS.surface2,padding:"12px 14px",borderBottom:ci<cat.chores.length-1?`1px solid ${DS.border}`:"none"}}>
+                          <div style={{fontSize:"0.78rem",color:DS.muted,marginBottom:8}}>⏱ כמה זמן לקח לך?</div>
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                            {[2,5,10,15,20,30].map(m=>(
+                              <button key={m} onClick={()=>setSelectedTime(m)} style={{padding:"5px 11px",borderRadius:18,background:selectedTime===m?user.color:"rgba(255,255,255,.05)",border:`1px solid ${selectedTime===m?user.color:"rgba(255,255,255,.08)"}`,color:selectedTime===m?"#000":DS.text,fontFamily:"-apple-system,sans-serif",fontSize:"0.78rem",cursor:"pointer"}}>{m} דק'</button>
+                            ))}
+                          </div>
+                          <div style={{display:"flex",gap:6,marginBottom:8}}>
+                            <input type="number" placeholder="זמן אחר" value={customTime} onChange={e=>setCustomTime(e.target.value)} style={{flex:1,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,color:DS.text,padding:"6px 10px",fontFamily:"-apple-system,sans-serif",fontSize:"0.82rem"}}/>
+                            <button onClick={()=>confirm(customTime?parseInt(customTime):selectedTime)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.82rem",padding:"7px 14px",cursor:"pointer"}}>✓</button>
+                          </div>
+                          <button onClick={()=>confirm(null)} style={{background:"none",border:"1px solid rgba(255,255,255,.07)",borderRadius:18,color:DS.muted,fontFamily:"-apple-system,sans-serif",fontSize:"0.75rem",padding:"4px 12px",cursor:"pointer"}}>דלג</button>
+                        </div>
                       )}
                     </div>
                   );
@@ -903,7 +1071,7 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
       })}
 
       {/* History */}
-      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,margin:"20px 0 10px",textTransform:"uppercase"}}>HISTORY</div>
+      <SectionDivider icon="📋" label="היסטוריה" />
       <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"0 14px"}}>
         {[...ulog].reverse().slice(0,8).map((e,i,arr)=>(
           <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?`1px solid ${DS.border}`:"none",fontSize:"0.8rem"}}>
@@ -943,6 +1111,38 @@ function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry
         </div>
       </div>
 
+      {/* Brushing overview for all kids */}
+      <div style={{
+        background:"linear-gradient(135deg, #071211, #0a1a16)",
+        borderRadius:16,border:"1px solid rgba(0,212,170,0.2)",
+        padding:"14px",marginBottom:20,
+      }}>
+        <div style={{fontSize:"0.65rem",fontWeight:700,color:"#00D4AA",letterSpacing:1.5,marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
+          <span>🦷</span> מעקב צחצוח היום
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+          {kids.map(k => {
+            const today = new Date().toDateString();
+            const morning = log.some(e => e.userId===k.id && e.choreId==="brush-morning" && new Date(e.ts).toDateString()===today);
+            const evening = log.some(e => e.userId===k.id && e.choreId==="brush-evening" && new Date(e.ts).toDateString()===today);
+            return (
+              <div key={k.id} style={{background:"rgba(0,0,0,0.3)",borderRadius:12,padding:"10px 8px",textAlign:"center",border:`1px solid ${k.color}22`}}>
+                <Avatar user={k} photo={avatars?.[k.id]} size={32} style={{margin:"0 auto 6px"}}/>
+                <div style={{fontSize:"0.75rem",fontWeight:700,color:k.color,marginTop:4,marginBottom:6}}>{k.name}</div>
+                <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                  <div style={{fontSize:"0.6rem",padding:"2px 6px",borderRadius:6,background:morning?"rgba(0,212,170,0.2)":"rgba(255,255,255,0.04)",color:morning?"#00D4AA":DS.dim,border:`1px solid ${morning?"rgba(0,212,170,0.4)":"rgba(255,255,255,0.06)"}`}}>
+                    🌅{morning?"✓":"✗"}
+                  </div>
+                  <div style={{fontSize:"0.6rem",padding:"2px 6px",borderRadius:6,background:evening?"rgba(0,212,170,0.2)":"rgba(255,255,255,0.04)",color:evening?"#00D4AA":DS.dim,border:`1px solid ${evening?"rgba(0,212,170,0.4)":"rgba(255,255,255,0.06)"}`}}>
+                    🌙{evening?"✓":"✗"}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Kid summaries */}
       <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>KIDS SUMMARY</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
@@ -952,7 +1152,7 @@ function ParentPage({ user, log, bonus, onAdjustBonus, onSwitchUser, onEditEntry
             <div key={k.id} onClick={()=>onSwitchUser(k.id)} style={{background:DS.surface,borderRadius:14,padding:"14px 10px",border:`1px solid ${k.color}22`,textAlign:"center",cursor:"pointer",transition:"transform .2s"}}
               onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow="0 8px 20px rgba(0,0,0,.4)";}}
               onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="";}}>
-              <Avatar user={k} photo={avatars?.[k.id]} size={40} style={{margin:"0 auto 8px"}}/>
+              <Avatar user={k} photo={avatars?.[k.id]} size={40}/>
               <div style={{fontSize:"0.82rem",fontWeight:700,color:k.color,marginTop:6}}>{k.name}</div>
               <div style={{fontSize:"1.3rem",fontWeight:800,color:k.color,fontVariantNumeric:"tabular-nums"}}>{sc}</div>
               <div style={{fontSize:"0.62rem",color:DS.muted}}>{wk} השבוע</div>
@@ -1146,12 +1346,13 @@ export default function App() {
   const handlePinSuccess=()=>{setCurrentUser(pinTarget.id);setPinTarget(null);window.scrollTo({top:0,behavior:"smooth"});};
 
   const handleLogChore=(uid,choreId,catId,duration,photoUrl)=>{
-    const chore=CHORE_CATEGORIES.flatMap(c=>c.chores).find(c=>c.id===choreId); if(!chore) return;
+    // Lookup from all chores (includes brush)
+    const chore = ALL_CHORES_FLAT.find(c=>c.id===choreId);
+    if(!chore) return;
     const entry={userId:uid,choreId,catId,choreTitle:chore.name,pts:chore.pts,duration:duration||null,photoUrl:photoUrl||null,ts:Date.now()};
     setLog(prev=>{const next=[...prev,entry];persist(next,stateRef.current.bonus);return next;});
     showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name}${chore.tracking?"":" · +"+chore.pts+" נקודות"}!`);
     pop();
-    // photo proof saved to DB — no email on success
   };
   const handleAdjustBonus=(uid,amount)=>{
     setBonus(prev=>{const next={...prev,[uid]:(prev[uid]||0)+amount};persist(stateRef.current.log,next);return next;});
@@ -1193,7 +1394,6 @@ export default function App() {
     <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#000",color:DS.muted,fontFamily:"-apple-system,sans-serif",flexDirection:"column",gap:14}}>
       <Logo size={56}/>
       <div style={{fontSize:"0.85rem",marginTop:4}}>טוען...</div>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
@@ -1205,7 +1405,6 @@ export default function App() {
         input:focus,button{outline:none;}
         ::-webkit-scrollbar{width:4px;}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:2px;}
-        /* iOS safe area — home indicator + notch */
         nav { padding-bottom: 0 !important; }
         #root > div > div:not(nav):not([style*="fixed"]) {
           padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important;
