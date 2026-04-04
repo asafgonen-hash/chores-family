@@ -38,24 +38,38 @@ function startBrushingWatchdog(getLog) {
   const check = () => {
     const now = Date.now(), log = getLog();
     KIDS.forEach(uid => {
-      const lastEntry = [...log].filter(e=>e.userId===uid&&BRUSH_IDS.includes(e.choreId)).sort((a,b)=>b.ts-a.ts)[0];
-      let lastBrushTs, gapMs;
-      if (!lastEntry) {
-        const midnight = new Date(); midnight.setHours(0,0,0,0);
-        lastBrushTs = midnight.getTime(); gapMs = EVENING_GAP_HOURS * 3600000;
-      } else {
-        lastBrushTs = lastEntry.ts;
-        gapMs = lastEntry.choreId === MORNING_ID ? MORNING_GAP_HOURS*3600000 : EVENING_GAP_HOURS*3600000;
-      }
-      const alertKey = `${uid}-${lastBrushTs}`;
-      if (now >= lastBrushTs + gapMs && !alerted[alertKey]) {
-        alerted[alertKey] = true;
-        const h = Math.floor((now-lastBrushTs)/3600000);
-        const session = lastEntry?.choreId === "brush-morning" ? "בוקר" : "ערב";
+      // Check morning brush: did kid brush this morning (since midnight)?
+      const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+      const todayStart = todayMidnight.getTime();
+      const morningDeadline = todayStart + MORNING_GAP_HOURS * 3600000;
+      const eveningDeadline = todayStart + 24 * 3600000 - (24 - MORNING_GAP_HOURS - EVENING_GAP_HOURS) * 3600000;
+
+      const brushedMorningToday = log.some(e =>
+        e.userId === uid && e.choreId === MORNING_ID && e.ts >= todayStart
+      );
+      const brushedEveningToday = log.some(e =>
+        e.userId === uid && e.choreId === EVENING_ID && e.ts >= todayStart
+      );
+
+      // Morning alert: after MORNING_GAP_HOURS since midnight, if still no morning brush
+      const morningKey = `${uid}-morning-${Math.floor(todayStart/86400000)}`;
+      if (now >= morningDeadline && !brushedMorningToday && !alerted[morningKey]) {
+        alerted[morningKey] = true;
         sendEmail({
           child_name: KID_NAMES[uid],
-          session,
-          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים ב${session}`,
+          session: "בוקר",
+          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים בוקר`,
+        });
+      }
+
+      // Evening alert: after MORNING_GAP_HOURS + EVENING_GAP_HOURS since midnight, if no evening brush
+      const eveningKey = `${uid}-evening-${Math.floor(todayStart/86400000)}`;
+      if (now >= eveningDeadline && !brushedEveningToday && !alerted[eveningKey]) {
+        alerted[eveningKey] = true;
+        sendEmail({
+          child_name: KID_NAMES[uid],
+          session: "ערב",
+          subject: `🦷 ${KID_NAMES[uid]} לא צחצח שיניים ערב`,
         });
       }
     });
@@ -526,6 +540,57 @@ function PhotoUpload({ user, chore, onDone, onSkip }) {
   );
 }
 
+// ─── BRUSH PHOTOS MODAL ───────────────────────────────────────────────────────
+function BrushPhotosModal({ user, log, avatars, onClose }) {
+  const BRUSH_IDS = ["brush-morning", "brush-evening"];
+  const BRUSH_NAMES = { "brush-morning": "בוקר 🌅", "brush-evening": "ערב 🌙" };
+
+  const photos = [...log]
+    .filter(e => e.userId === user.id && BRUSH_IDS.includes(e.choreId) && e.photoUrl)
+    .reverse()
+    .slice(0, 12);
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:250,display:"flex",alignItems:"flex-end",justifyContent:"center",padding:"0 0 0 0"}}
+      onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#111",borderRadius:"24px 24px 0 0",padding:"20px 16px 40px",width:"100%",maxWidth:500,maxHeight:"85vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18,flexShrink:0}}>
+          <Avatar user={user} photo={avatars?.[user.id]} size={44}/>
+          <div>
+            <div style={{fontSize:"1.1rem",fontWeight:700,color:user.color}}>{user.name}</div>
+            <div style={{fontSize:"0.72rem",color:"#555"}}>🦷 תמונות צחצוח אחרונות</div>
+          </div>
+          <button onClick={onClose} style={{marginRight:"auto",background:"rgba(255,255,255,.07)",border:"none",borderRadius:"50%",width:32,height:32,color:"#666",cursor:"pointer",fontSize:"1rem"}}>✕</button>
+        </div>
+
+        {/* Photos grid */}
+        <div style={{overflowY:"auto",flex:1}}>
+          {photos.length === 0 ? (
+            <div style={{textAlign:"center",color:"#444",padding:"40px 20px"}}>
+              <div style={{fontSize:"3rem",marginBottom:12}}>📷</div>
+              <div style={{fontSize:"0.85rem"}}>עדיין אין תמונות צחצוח</div>
+            </div>
+          ) : (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+              {photos.map((e,i)=>(
+                <div key={i} style={{position:"relative",borderRadius:12,overflow:"hidden",aspectRatio:"1",background:"#1a1a1a"}}>
+                  <img src={e.photoUrl} alt="צחצוח" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  {/* Label overlay */}
+                  <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(transparent,rgba(0,0,0,.8))",padding:"8px 6px 5px",fontSize:"0.6rem",color:"#ccc",fontWeight:600}}>
+                    {BRUSH_NAMES[e.choreId]}<br/>
+                    <span style={{color:"#666",fontWeight:400}}>{new Date(e.ts).toLocaleDateString("he-IL",{day:"numeric",month:"short"})}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ log, bonus, avatars, onSwitchUser }) {
   const kids = USERS.filter(u=>u.role==="kid");
@@ -535,6 +600,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
   const lastEntry = log[log.length-1];
   const lastUser = lastEntry?USERS.find(u=>u.id===lastEntry.userId):null;
   const maxWeek = Math.max(...Object.values(weekCounts),1);
+  const [photosKid, setPhotosKid] = useState(null);
 
   return (
     <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
@@ -582,14 +648,19 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
         {sorted.map((u,i)=>{
           const sc=getUserScore(u.id,log,bonus);
           return (
-            <div key={u.id} onClick={()=>onSwitchUser(u.id)} style={{padding:"12px 14px",borderBottom:i<sorted.length-1?`1px solid ${DS.border}`:"none",cursor:"pointer"}}
+            <div key={u.id} style={{padding:"12px 14px",borderBottom:i<sorted.length-1?`1px solid ${DS.border}`:"none",cursor:"pointer"}}
               onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.03)"}
               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
                 <span style={{fontSize:"0.68rem",color:DS.dim,width:12,fontVariantNumeric:"tabular-nums"}}>{i+1}</span>
-                <Avatar user={u} photo={avatars?.[u.id]} size={52}/>
-                <span style={{flex:1,fontSize:"0.88rem",fontWeight:600}}>{u.name}</span>
-                <span style={{fontSize:"0.92rem",fontWeight:800,color:u.color,fontVariantNumeric:"tabular-nums"}}>{sc}</span>
+                <div onClick={()=>setPhotosKid(u)} style={{cursor:"pointer",flexShrink:0}}>
+                  <Avatar user={u} photo={avatars?.[u.id]} size={52}/>
+                </div>
+                <span onClick={()=>setPhotosKid(u)} style={{flex:1,fontSize:"0.88rem",fontWeight:600,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                  onMouseEnter={e=>e.currentTarget.style.textDecorationColor=u.color}
+                  onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}
+                >{u.name} <span style={{fontSize:"0.6rem",color:DS.dim}}>📷</span></span>
+                <span onClick={()=>onSwitchUser(u.id)} style={{fontSize:"0.92rem",fontWeight:800,color:u.color,fontVariantNumeric:"tabular-nums",cursor:"pointer"}}>{sc}</span>
                 <span style={{fontSize:"0.65rem",color:DS.muted}}>נק'</span>
               </div>
               <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:2,overflow:"hidden",marginRight:22}}>
@@ -643,6 +714,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
         })}
         {log.length===0&&<div style={{textAlign:"center",color:DS.muted,padding:"32px 20px",fontSize:"0.85rem"}}>עדיין אין משימות 😴</div>}
       </div>
+      {photosKid && <BrushPhotosModal user={photosKid} log={log} avatars={avatars} onClose={()=>setPhotosKid(null)}/>}
     </div>
   );
 }
@@ -695,7 +767,7 @@ function KidPage({ user, log, bonus, onLogChore, rewards, onRedeemReward, photo,
 
   const toggleCat = id => setOpenCats(p=>({...p,[id]:!p[id]}));
   const openTimeLog = (chore,catId) => {
-    if(activeChore?.choreId===chore.id){setActiveChore(null);setSelectedTime(null);setCustomTime("");return;}
+    // Always open fresh — allow re-doing (multiple times per day)
     setActiveChore({choreId:chore.id,catId});
     setSelectedTime(null);setCustomTime("");
     setOpenCats(p=>({...p,[catId]:true}));
@@ -1079,7 +1151,7 @@ export default function App() {
     setLog(prev=>{const next=[...prev,entry];persist(next,stateRef.current.bonus);return next;});
     showToast(`${entry.photoUrl?"📷":"✅"} ${chore.name}${chore.tracking?"":" · +"+chore.pts+" נקודות"}!`);
     pop();
-    if(entry.photoUrl){const kidName=USERS.find(u=>u.id===uid)?.name||uid;sendEmail({child_name:kidName,session:"✅ צחצח ושלח הוכחה!",subject:`✅ ${kidName} צחצח שיניים!`});}
+    // photo proof saved to DB — no email on success
   };
   const handleAdjustBonus=(uid,amount)=>{
     setBonus(prev=>{const next={...prev,[uid]:(prev[uid]||0)+amount};persist(stateRef.current.log,next);return next;});
