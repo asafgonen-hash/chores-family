@@ -755,7 +755,7 @@ function BrushingSection({ user, log, onLogChore }) {
                     {both ? "✓✓" : morning ? "☀️" : evening ? "🌙" : ""}
                   </div>
                   <div style={{fontSize:"0.55rem",color: isToday ? "#00D4AA" : DS.dim,fontWeight: isToday ? 700 : 400}}>
-                    {d.toLocaleDateString("he-IL",{weekday:"short"}).slice(0,2)}
+                    {["א","ב","ג","ד","ה","ו","ש"][d.getDay()]}
                   </div>
                 </div>
               );
@@ -785,17 +785,16 @@ function SectionDivider({ icon, label }) {
 function Dashboard({ log, bonus, avatars, onSwitchUser }) {
   const kids = USERS.filter(u=>u.role==="kid");
   const sorted = [...kids].sort((a,b)=>getUserScore(b.id,log,bonus)-getUserScore(a.id,log,bonus));
-  const weekLog = getLastDaysLog(log,7);
-  const weekCounts = Object.fromEntries(kids.map(k=>[k.id,weekLog.filter(e=>e.userId===k.id).length]));
-  const lastEntry = log[log.length-1];
+  const lastEntry = [...log].reverse().find(e=>!["brush-morning","brush-evening"].includes(e.choreId));
   const lastUser = lastEntry?USERS.find(u=>u.id===lastEntry.userId):null;
-  const maxWeek = Math.max(...Object.values(weekCounts),1);
   const [photosKid, setPhotosKid] = useState(null);
+  const today = new Date().toDateString();
 
   return (
     <div style={{padding:"16px 16px 80px",maxWidth:900,margin:"0 auto",fontFamily:"-apple-system,sans-serif",direction:"rtl",color:DS.text}}>
+
       {/* Header */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
         <div>
           <div style={{fontSize:"1.4rem",fontWeight:700,letterSpacing:-0.5}}>משימות הבית</div>
           <div style={{fontSize:"0.72rem",color:DS.muted,marginTop:2}}>
@@ -805,34 +804,48 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
         <Logo size={40}/>
       </div>
 
-      {/* Last chore */}
-      {lastUser && (
-        <div style={{background:DS.surface,borderRadius:14,padding:"12px 14px",border:`1px solid ${DS.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-          <Avatar user={lastUser} photo={avatars?.[lastUser.id]} size={48}/>
-          <div>
-            <div style={{fontSize:"0.68rem",color:DS.muted}}>המשימה האחרונה</div>
-            <div style={{fontSize:"0.85rem",fontWeight:700,color:lastUser.color}}>{lastUser.name} · {lastEntry.choreTitle}</div>
-            <div style={{fontSize:"0.68rem",color:DS.dim}}>{timeAgo(lastEntry.ts)}</div>
-          </div>
-          <div style={{marginRight:"auto",fontSize:"1.1rem",fontWeight:800,color:lastUser.color,fontVariantNumeric:"tabular-nums"}}>+{lastEntry.pts}</div>
+      {/* ══ 1. BRUSHING STATUS ══ */}
+      <div style={{background:"linear-gradient(135deg, #071211 0%, #0d1f1b 100%)",borderRadius:16,border:"1px solid rgba(0,212,170,0.2)",padding:"12px 14px",marginBottom:14,boxShadow:"0 0 30px rgba(0,212,170,0.05)"}}>
+        <div style={{fontSize:"0.6rem",fontWeight:800,color:"#00D4AA",letterSpacing:1.5,textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+          <span>🦷</span> צחצוח שיניים היום
         </div>
-      )}
-
-      {/* At a Glance */}
-      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>AT A GLANCE</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-        <div style={{background:DS.surface,borderRadius:14,padding:"14px 12px",border:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-          <div style={{fontSize:"0.65rem",color:DS.muted,fontWeight:600,alignSelf:"flex-start"}}>משימות השבוע</div>
-          <Ring value={weekLog.length} max={Math.max(weekLog.length+10,30)} color={DS.accent} size={70} sw={7}/>
-        </div>
-        <div style={{background:DS.surface,borderRadius:14,padding:"14px 12px",border:`1px solid ${DS.border}`,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-          <div style={{fontSize:"0.65rem",color:DS.muted,fontWeight:600,alignSelf:"flex-start"}}>מוביל השבוע</div>
-          <Ring value={getUserScore(sorted[0]?.id,log,bonus)} max={Math.max(getUserScore(sorted[0]?.id,log,bonus)+20,150)} color={sorted[0]?.color} size={70} sw={7}/>
-          <Avatar user={sorted[0]} photo={avatars?.[sorted[0]?.id]} size={36}/>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+          {kids.map(k=>{
+            const morning=log.some(e=>e.userId===k.id&&e.choreId==="brush-morning"&&new Date(e.ts).toDateString()===today);
+            const evening=log.some(e=>e.userId===k.id&&e.choreId==="brush-evening"&&new Date(e.ts).toDateString()===today);
+            const both=morning&&evening;
+            const lastBrush=[...log].reverse().find(e=>e.userId===k.id&&["brush-morning","brush-evening"].includes(e.choreId));
+            return (
+              <div key={k.id} onClick={()=>onSwitchUser(k.id)} style={{background:both?"rgba(0,212,170,0.1)":"rgba(0,0,0,0.3)",borderRadius:12,padding:"10px 8px",textAlign:"center",border:`1.5px solid ${both?"rgba(0,212,170,0.4)":morning||evening?"rgba(0,212,170,0.15)":k.color+"22"}`,cursor:"pointer"}}>
+                <Avatar user={k} photo={avatars?.[k.id]} size={36}/>
+                <div style={{fontSize:"0.75rem",fontWeight:700,color:k.color,margin:"5px 0 2px"}}>{k.name}</div>
+                <div style={{fontSize:"0.55rem",color:lastBrush?"rgba(0,212,170,0.6)":"rgba(255,255,255,0.2)",marginBottom:6,fontWeight:600}}>
+                  {lastBrush ? timeAgo(lastBrush.ts) : "טרם צחצח"}
+                </div>
+                <div style={{display:"flex",gap:3,justifyContent:"center"}}>
+                  <div style={{fontSize:"0.6rem",padding:"2px 6px",borderRadius:6,fontWeight:700,background:morning?"rgba(0,212,170,0.2)":"rgba(255,255,255,0.04)",color:morning?"#00D4AA":"rgba(255,255,255,0.2)",border:`1px solid ${morning?"rgba(0,212,170,0.4)":"rgba(255,255,255,0.06)"}`}}>🌅 {morning?"✓":"✗"}</div>
+                  <div style={{fontSize:"0.6rem",padding:"2px 6px",borderRadius:6,fontWeight:700,background:evening?"rgba(0,212,170,0.2)":"rgba(255,255,255,0.04)",color:evening?"#00D4AA":"rgba(255,255,255,0.2)",border:`1px solid ${evening?"rgba(0,212,170,0.4)":"rgba(255,255,255,0.06)"}`}}>🌙 {evening?"✓":"✗"}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Leaderboard */}
+      {/* ══ 2. LAST CHORE ══ */}
+      {lastUser && (
+        <div style={{background:DS.surface,borderRadius:14,padding:"12px 14px",border:`1px solid ${DS.border}`,marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <Avatar user={lastUser} photo={avatars?.[lastUser.id]} size={46}/>
+          <div>
+            <div style={{fontSize:"0.65rem",color:DS.muted}}>המשימה האחרונה</div>
+            <div style={{fontSize:"0.85rem",fontWeight:700,color:lastUser.color}}>{lastUser.name} · {lastEntry.choreTitle}</div>
+            <div style={{fontSize:"0.65rem",color:DS.dim}}>{timeAgo(lastEntry.ts)}</div>
+          </div>
+          <div style={{marginRight:"auto",fontSize:"1.1rem",fontWeight:800,color:lastUser.color}}>+{lastEntry.pts}</div>
+        </div>
+      )}
+
+      {/* ══ 3. LEADERBOARD ══ */}
       <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>LEADERBOARD</div>
       <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,overflow:"hidden",marginBottom:20}}>
         {sorted.map((u,i)=>{
@@ -844,12 +857,9 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
                 <span style={{fontSize:"0.68rem",color:DS.dim,width:12,fontVariantNumeric:"tabular-nums"}}>{i+1}</span>
                 <div onClick={()=>setPhotosKid(u)} style={{cursor:"pointer",flexShrink:0}}>
-                  <Avatar user={u} photo={avatars?.[u.id]} size={52}/>
+                  <Avatar user={u} photo={avatars?.[u.id]} size={48}/>
                 </div>
-                <span onClick={()=>setPhotosKid(u)} style={{flex:1,fontSize:"0.88rem",fontWeight:600,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
-                  onMouseEnter={e=>e.currentTarget.style.textDecorationColor=u.color}
-                  onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}
-                >{u.name} <span style={{fontSize:"0.6rem",color:DS.dim}}>📷</span></span>
+                <span style={{flex:1,fontSize:"0.88rem",fontWeight:600}}>{u.name}</span>
                 <span onClick={()=>onSwitchUser(u.id)} style={{fontSize:"0.92rem",fontWeight:800,color:u.color,fontVariantNumeric:"tabular-nums",cursor:"pointer"}}>{sc}</span>
                 <span style={{fontSize:"0.65rem",color:DS.muted}}>נק'</span>
               </div>
@@ -861,28 +871,7 @@ function Dashboard({ log, bonus, avatars, onSwitchUser }) {
         })}
       </div>
 
-      {/* Weekly bars */}
-      <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>LAST 7 DAYS</div>
-      <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"14px",marginBottom:20}}>
-        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:72,marginBottom:8}}>
-          {kids.map(k=>{const cnt=weekCounts[k.id];const h=Math.round((cnt/maxWeek)*64);return(
-            <div key={k.id} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-              <div style={{fontSize:"0.65rem",fontWeight:700,color:k.color,fontVariantNumeric:"tabular-nums"}}>{cnt}</div>
-              <div style={{width:"100%",height:h||3,borderRadius:"4px 4px 0 0",background:k.color,transition:"height .5s"}}/>
-            </div>
-          );})}
-        </div>
-        <div style={{display:"flex",gap:8}}>
-          {kids.map(k=>(
-            <div key={k.id} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-              <Avatar user={k} photo={avatars?.[k.id]} size={18}/>
-              <span style={{fontSize:"0.65rem",color:DS.muted}}>{k.name}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Recent activity */}
+      {/* ══ 4. RECENT ACTIVITY ══ */}
       <div style={{fontSize:"0.65rem",fontWeight:700,color:DS.dim,letterSpacing:1.5,marginBottom:10,textTransform:"uppercase"}}>RECENT ACTIVITY</div>
       <div style={{background:DS.surface,borderRadius:14,border:`1px solid ${DS.border}`,padding:"0 14px"}}>
         {[...log].reverse().slice(0,8).map((e,i,arr)=>{
