@@ -926,7 +926,11 @@ function KidRewards({ user, rewards, log, bonus, onRedeemReward }) {
               <div style={{fontSize:"1.8rem",textAlign:"center"}}>{r.emoji||"🎁"}</div>
               <div style={{fontSize:"0.78rem",fontWeight:700,textAlign:"center"}}>{r.title}</div>
               <div style={{fontSize:"0.82rem",fontWeight:800,textAlign:"center",color:canRedeem?user.color:DS.muted,fontVariantNumeric:"tabular-nums"}}>{r.pts} נק'</div>
-              {!canRedeem&&<div style={{height:3,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:2}/></div>}
+              {!canRedeem&&(
+                <div style={{height:3,background:"rgba(255,255,255,.07)",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${pct}%`,background:user.color,borderRadius:2}}/>
+                </div>
+              )}
               {!canRedeem&&<div style={{fontSize:"0.65rem",color:DS.dim,textAlign:"center"}}>עוד {r.pts-score}</div>}
               {canRedeem&&<button onClick={()=>onRedeemReward(r.id,user.id)} style={{background:user.color,border:"none",borderRadius:8,color:"#000",fontFamily:"-apple-system,sans-serif",fontWeight:700,fontSize:"0.8rem",padding:"6px",cursor:"pointer"}}>מימוש!</button>}
               {redeemed>0&&<div style={{fontSize:"0.65rem",color:DS.accent,textAlign:"center"}}>✓ {redeemed}×</div>}
