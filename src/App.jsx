@@ -26,30 +26,54 @@ async function sendEmail(params) {
 }
 
 // ─── BRUSHING WATCHDOG ────────────────────────────────────────────────────────
+// Uses localStorage so alerts don't repeat on page reload
 const MORNING_GAP_HOURS = 15;
-const EVENING_GAP_HOURS = 10;
+const EVENING_GAP_HOURS = 22;
+
+function getAlerted() {
+  try { return JSON.parse(localStorage.getItem("brushAlerted")||"{}"); } catch { return {}; }
+}
+function setAlerted(key) {
+  try {
+    const a = getAlerted();
+    a[key] = true;
+    // Clean up old keys (older than 2 days)
+    const twoDaysAgo = Math.floor(Date.now()/86400000) - 2;
+    Object.keys(a).forEach(k => {
+      const day = parseInt(k.split("-").pop());
+      if (day < twoDaysAgo) delete a[k];
+    });
+    localStorage.setItem("brushAlerted", JSON.stringify(a));
+  } catch {}
+}
+
 function startBrushingWatchdog(getLog) {
   const MORNING_ID = "brush-morning", EVENING_ID = "brush-evening";
   const KIDS = ["ido","yotam","itai"];
   const KID_NAMES = { ido:"עידו", yotam:"יותם", itai:"איתי" };
-  const alerted = {};
+
   const check = () => {
     const now = Date.now(), log = getLog();
+    const alerted = getAlerted();
     KIDS.forEach(uid => {
       const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
       const todayStart = todayMidnight.getTime();
+      const todayDay = Math.floor(todayStart/86400000);
       const morningDeadline = todayStart + MORNING_GAP_HOURS * 3600000;
-      const eveningDeadline = todayStart + 24 * 3600000 - (24 - MORNING_GAP_HOURS - EVENING_GAP_HOURS) * 3600000;
+      const eveningDeadline = todayStart + EVENING_GAP_HOURS * 3600000;
+
       const brushedMorning = log.some(e => e.userId===uid && e.choreId===MORNING_ID && e.ts>=todayStart);
       const brushedEvening = log.some(e => e.userId===uid && e.choreId===EVENING_ID && e.ts>=todayStart);
-      const morningKey = `${uid}-morning-${Math.floor(todayStart/86400000)}`;
+
+      const morningKey = `${uid}-morning-${todayDay}`;
       if (now>=morningDeadline && !brushedMorning && !alerted[morningKey]) {
-        alerted[morningKey]=true;
+        setAlerted(morningKey);
         sendEmail({ child_name:KID_NAMES[uid], session:"בוקר", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים בוקר` });
       }
-      const eveningKey = `${uid}-evening-${Math.floor(todayStart/86400000)}`;
+
+      const eveningKey = `${uid}-evening-${todayDay}`;
       if (now>=eveningDeadline && !brushedEvening && !alerted[eveningKey]) {
-        alerted[eveningKey]=true;
+        setAlerted(eveningKey);
         sendEmail({ child_name:KID_NAMES[uid], session:"ערב", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים ערב` });
       }
     });
