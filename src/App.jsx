@@ -1,146 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { loadData, saveData, subscribeToRealtime, uploadProofPhoto } from "./supabase.js";
 
-// ─── EMAIL CONFIG ─────────────────────────────────────────────────────────────
-const EMAILJS_SERVICE_ID  = "service_upz56qe";
-const EMAILJS_TEMPLATE_ID = "template_2xculej";
-const EMAILJS_PUBLIC_KEY  = "3ErC_sLT1L_Z-i_Sd";
-
-async function sendEmail(params) {
-  if (EMAILJS_SERVICE_ID === "PASTE_SERVICE_ID") return;
-  try {
-    await fetch("https://api.emailjs.com/api/v1.0/email/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        service_id:  EMAILJS_SERVICE_ID,
-        template_id: EMAILJS_TEMPLATE_ID,
-        user_id:     EMAILJS_PUBLIC_KEY,
-        template_params: {
-          to_email: "asafgonen@gmail.com,GonenAnna@gmail.com",
-          ...params,
-        },
-      }),
-    });
-  } catch(e) { console.warn("Email error:", e); }
-}
-
-// ─── BRUSHING WATCHDOG ────────────────────────────────────────────────────────
-// Uses localStorage so alerts don't repeat on page reload.
-// Uses a "tab leader" lock so only ONE tab sends emails even when multiple
-// tabs / devices are open simultaneously (prevents duplicate emails).
-const MORNING_GAP_HOURS = 15;
-const EVENING_GAP_HOURS = 22;
-
-// Unique ID for this tab session
-const TAB_ID = Math.random().toString(36).slice(2);
-const LEADER_KEY = "brushWatchdogLeader";
-const LEADER_TTL = 35 * 1000; // leader heartbeat every 30s, expires after 35s
-
-function isLeader() {
-  try {
-    const raw = localStorage.getItem(LEADER_KEY);
-    if (!raw) return false;
-    const { id, ts } = JSON.parse(raw);
-    if (id === TAB_ID) return true;           // we are the leader
-    if (Date.now() - ts > LEADER_TTL) return false; // leader expired → take over
-    return false;                              // someone else is leader
-  } catch { return false; }
-}
-function claimLeader() {
-  try {
-    localStorage.setItem(LEADER_KEY, JSON.stringify({ id: TAB_ID, ts: Date.now() }));
-  } catch {}
-}
-function heartbeat() {
-  // Renew leadership timestamp so other tabs know we're alive
-  try {
-    const raw = localStorage.getItem(LEADER_KEY);
-    if (!raw) { claimLeader(); return; }
-    const { id } = JSON.parse(raw);
-    if (id === TAB_ID) claimLeader(); // refresh ts
-  } catch {}
-}
-function tryBecomeLeader() {
-  try {
-    const raw = localStorage.getItem(LEADER_KEY);
-    if (!raw) { claimLeader(); return; }
-    const { id, ts } = JSON.parse(raw);
-    if (id !== TAB_ID && Date.now() - ts > LEADER_TTL) claimLeader(); // take over expired leader
-  } catch { claimLeader(); }
-}
-
-// alerted keys stored in Supabase (via stateRef) — shared across all devices
-function getAlerted(stateRef) {
-  const a = stateRef.current?.brushAlerted || {};
-  const twoDaysAgo = Math.floor(Date.now()/86400000) - 2;
-  const cleaned = {};
-  Object.keys(a).forEach(k => {
-    const day = parseInt(k.split("-").pop());
-    if (day >= twoDaysAgo) cleaned[k] = true;
-  });
-  return cleaned;
-}
-async function markAlerted(key, stateRef, persistAlerted) {
-  const a = getAlerted(stateRef);
-  a[key] = true;
-  stateRef.current = { ...stateRef.current, brushAlerted: a };
-  await persistAlerted(a);
-}
-
-function startBrushingWatchdog(getLog, stateRef, persistAlerted) {
-  const MORNING_ID = "brush-morning", EVENING_ID = "brush-evening";
-  const KIDS = ["ido","yotam","itai"];
-  const KID_NAMES = { ido:"עידו", yotam:"יותם", itai:"איתי" };
-
-  // Try to become leader immediately (first tab wins)
-  tryBecomeLeader();
-
-  const check = async () => {
-    // Heartbeat — keeps our leadership alive
-    if (isLeader()) heartbeat();
-    else tryBecomeLeader();
-
-    // Only the leader tab sends emails
-    if (!isLeader()) return;
-
-    const now = Date.now(), log = getLog();
-    const alerted = getAlerted(stateRef);
-    for (const uid of KIDS) {
-      const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
-      const todayStart = todayMidnight.getTime();
-      const todayDay = Math.floor(todayStart/86400000);
-      const morningDeadline = todayStart + MORNING_GAP_HOURS * 3600000;
-      const eveningDeadline = todayStart + EVENING_GAP_HOURS * 3600000;
-
-      const brushedMorning = log.some(e => e.userId===uid && e.choreId===MORNING_ID && e.ts>=todayStart);
-      const brushedEvening = log.some(e => e.userId===uid && e.choreId===EVENING_ID && e.ts>=todayStart);
-
-      const morningKey = `${uid}-morning-${todayDay}`;
-      if (now>=morningDeadline && !brushedMorning && !alerted[morningKey]) {
-        await markAlerted(morningKey, stateRef, persistAlerted);
-        sendEmail({ child_name:KID_NAMES[uid], session:"בוקר", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים בוקר` });
-      }
-
-      const eveningKey = `${uid}-evening-${todayDay}`;
-      if (now>=eveningDeadline && !brushedEvening && !alerted[eveningKey]) {
-        await markAlerted(eveningKey, stateRef, persistAlerted);
-        sendEmail({ child_name:KID_NAMES[uid], session:"ערב", subject:`🦷 ${KID_NAMES[uid]} לא צחצח שיניים ערב` });
-      }
-    }
-  };
-
-  // Heartbeat interval: 30s (keeps leader alive, or takes over if leader died)
-  const heartbeatInterval = setInterval(() => {
-    if (isLeader()) heartbeat();
-    else tryBecomeLeader();
-  }, 30 * 1000);
-
-  check();
-  const checkInterval = setInterval(check, 10 * 60 * 1000);
-
-  // Return cleanup for both intervals
-  return () => { clearInterval(heartbeatInterval); clearInterval(checkInterval); };
 }
 
 // ─── DESIGN SYSTEM ────────────────────────────────────────────────────────────
@@ -1379,28 +1239,9 @@ export default function App() {
   const toastTimer = useRef(null), saveTimer = useRef(null);
   const stateRef = useRef({log:[],bonus:{ido:0,yotam:0,itai:0},rewards:[],avatars:{}});
 
-  const watchdogCleanup = useRef(null);
-  useEffect(()=>{
-    loadData().then(data=>{
-      if(data){
-        setLog(data.log||[]); setBonus(data.bonus||{ido:0,yotam:0,itai:0});
-        setRewards(data.rewards||[]); setAvatars(data.avatars||{});
-        stateRef.current = data;
-      }
-      // Start watchdog AFTER data is loaded — so first check sees real log
-      const persistAlerted = async (ba) => {
-        const s = stateRef.current;
-        await saveData({log:s.log||[],bonus:s.bonus||{},rewards:s.rewards||[],avatars:s.avatars||{},brushAlerted:ba});
-      };
-      watchdogCleanup.current = startBrushingWatchdog(()=>stateRef.current.log||[], stateRef, persistAlerted);
-    }).catch(console.error).finally(()=>{ setLoading(false); window.__hideSplash?.(); });
-    return ()=>{ watchdogCleanup.current?.(); };
-  },[]);
 
   useEffect(()=>{
     const stop = subscribeToRealtime(data=>{
-      // Always update stateRef (includes brushAlerted) — UI state only when log/bonus change
-      stateRef.current = { ...stateRef.current, brushAlerted: data.brushAlerted||{} };
       if(data.log?.length!==stateRef.current.log?.length||JSON.stringify(data.bonus)!==JSON.stringify(stateRef.current.bonus)){
         setLog(data.log||[]); setBonus(data.bonus||{ido:0,yotam:0,itai:0});
         setRewards(data.rewards||[]); setAvatars(data.avatars||{});
@@ -1410,14 +1251,13 @@ export default function App() {
     return stop;
   },[]);
 
-  const persist = useCallback((nextLog,nextBonus,nextRewards,nextAvatars,nextBrushAlerted)=>{
+  const persist = useCallback((nextLog,nextBonus,nextRewards,nextAvatars)=>{
     const r=nextRewards!==undefined?nextRewards:stateRef.current.rewards||[];
     const av=nextAvatars!==undefined?nextAvatars:stateRef.current.avatars||{};
-    const ba=nextBrushAlerted!==undefined?nextBrushAlerted:stateRef.current.brushAlerted||{};
-    stateRef.current={log:nextLog,bonus:nextBonus,rewards:r,avatars:av,brushAlerted:ba};
+    stateRef.current={log:nextLog,bonus:nextBonus,rewards:r,avatars:av};
     clearTimeout(saveTimer.current); setSaving(true);
     saveTimer.current=setTimeout(async()=>{
-      try{await saveData({log:nextLog,bonus:nextBonus,rewards:r,avatars:av,brushAlerted:ba});}
+      try{await saveData({log:nextLog,bonus:nextBonus,rewards:r,avatars:av});}
       catch(e){console.error("Save error",e);}
       finally{setSaving(false);}
     },600);
