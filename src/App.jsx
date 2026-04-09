@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { loadData, saveData, subscribeToRealtime, uploadProofPhoto } from "./supabase.js";
 
-}
-
 // ─── DESIGN SYSTEM ────────────────────────────────────────────────────────────
 const DS = {
   bg: "#000000", surface: "#111111", surface2: "#1a1a1a",
