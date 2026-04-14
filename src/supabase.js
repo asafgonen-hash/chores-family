@@ -40,7 +40,6 @@ export async function saveData(data) {
 }
 
 // Realtime websocket — fires callback(newData) instantly on any device save.
-// Uses Supabase's native Phoenix websocket protocol. Auto-reconnects on drop.
 export function subscribeToRealtime(callback) {
   let ws = null;
   let heartbeatTimer = null;
@@ -101,13 +100,12 @@ export function subscribeToRealtime(callback) {
 }
 
 // ── Storage: upload proof photo ───────────────────────────────────────────────
-// Compresses image to ~80KB before uploading to Supabase Storage bucket
+// Compresses image aggressively to keep Supabase row size small
 export async function uploadProofPhoto(file, uid, choreId) {
-  // Compress + convert to base64 data URL — no Storage bucket needed
-  return await compressToBase64(file, 600, 0.75);
+  return await compressToBase64(file, 300, 0.5);
 }
 
-// Compress image to base64 JPEG — ~40-80KB result
+// Compress image to base64 JPEG — ~10-20KB result
 function compressToBase64(file, maxWidth, quality) {
   return new Promise((resolve, reject) => {
     const img = new Image();
